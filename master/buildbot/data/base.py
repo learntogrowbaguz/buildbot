@@ -13,26 +13,49 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
 import copy
+import enum
 import functools
 import re
 from collections import UserList
+from typing import TYPE_CHECKING
 
 from twisted.internet import defer
 
 from buildbot.data import exceptions
+from buildbot.util.twisted import async_to_deferred
+
+if TYPE_CHECKING:
+    from typing import Any
+    from typing import Literal
+
+    from buildbot.data import types
+    from buildbot.data.resultspec import ResultSpec
+    from buildbot.db.builders import BuilderModel
+    from buildbot.db.builds import BuildModel
+    from buildbot.db.logs import LogModel
+    from buildbot.db.steps import StepModel
+    from buildbot.db.workers import WorkerModel
+    from buildbot.master import BuildMaster
+
+
+class EndpointKind(enum.Enum):
+    SINGLE = 1
+    COLLECTION = 2
+    RAW = 3
+    RAW_INLINE = 4
 
 
 class ResourceType:
-    name = None
-    plural = None
-    endpoints = []
-    keyField = None
+    name: str | None = None
+    plural: str | None = None
+    endpoints: list[type[Endpoint]] = []
     eventPathPatterns = ""
-    entityType = None
-    subresources = []
+    entityType: types.Type | None = None
 
-    def __init__(self, master):
+    def __init__(self, master: BuildMaster):
         self.master = master
         self.compileEventPathPatterns()
 
@@ -49,7 +72,7 @@ class ResourceType:
             pathPatterns[i] = pp
         self.eventPaths = pathPatterns
 
-    @functools.lru_cache(1)
+    @functools.lru_cache(1)  # noqa: B019
     def getEndpoints(self):
         endpoints = self.endpoints[:]
         for i, ep in enumerate(endpoints):
@@ -58,17 +81,17 @@ class ResourceType:
             endpoints[i] = ep(self, self.master)
         return endpoints
 
-    @functools.lru_cache(1)
+    @functools.lru_cache(1)  # noqa: B019
     def getDefaultEndpoint(self):
         for ep in self.getEndpoints():
-            if not ep.isCollection:
+            if ep.kind != EndpointKind.COLLECTION:
                 return ep
         return None
 
-    @functools.lru_cache(1)
+    @functools.lru_cache(1)  # noqa: B019
     def getCollectionEndpoint(self):
         for ep in self.getEndpoints():
-            if ep.isCollection or ep.isPseudoCollection:
+            if ep.kind == EndpointKind.COLLECTION or ep.isPseudoCollection:
                 return ep
         return None
 
@@ -82,7 +105,7 @@ class ResourceType:
             msg = self.sanitizeMessage(msg)
             for path in self.eventPaths:
                 path = path.format(**msg)
-                routingKey = tuple(path.split("/")) + (event,)
+                routingKey = (*tuple(path.split("/")), event)
                 self.master.mq.produce(routingKey, msg)
 
 
@@ -91,7 +114,7 @@ class SubResource:
         self.rtype = rtype
         self.endpoints = {}
         for endpoint in rtype.endpoints:
-            if endpoint.isCollection:
+            if endpoint.kind == EndpointKind.COLLECTION:
                 self.endpoints[rtype.plural] = endpoint
             else:
                 self.endpoints[rtype.name] = endpoint
@@ -99,17 +122,24 @@ class SubResource:
 
 class Endpoint:
     pathPatterns = ""
-    rootLinkName = None
-    isCollection = False
+    rootLinkName: str | None = None
     isPseudoCollection = False
-    isRaw = False
-    parentMapping = {}
+    kind = EndpointKind.SINGLE
+    parentMapping: dict[str, str] = {}
 
-    def __init__(self, rtype, master):
+    def __init__(self, rtype, master: BuildMaster):
         self.rtype = rtype
         self.master = master
 
-    def get(self, resultSpec, kwargs):
+    def get(self, resultSpec: ResultSpec, kwargs: dict[str, Any]):
+        raise NotImplementedError
+
+    async def stream(self, resultSpec: ResultSpec, kwargs: dict[str, Any]):
+        """
+        This is a prototype interface method for internal use.
+        There could be breaking changes to it.
+        Use at your own risks.
+        """
         raise NotImplementedError
 
     def control(self, action, args, kwargs):
@@ -119,93 +149,238 @@ class Endpoint:
             raise exceptions.InvalidControlException(f"action: {action} is not supported")
         return action_method(args, kwargs)
 
-    def get_kwargs_from_graphql_parent(self, parent, parent_type):
-        if parent_type not in self.parentMapping:
-            rtype = self.master.data.getResourceTypeForGraphQlType(parent_type)
-            if rtype.keyField in parent:
-                parentid = rtype.keyField
-            else:
-                raise NotImplementedError(
-                    "Collection endpoint should implement "
-                    "get_kwargs_from_graphql or parentMapping"
-                )
-        else:
-            parentid = self.parentMapping[parent_type]
-        ret = {'graphql': True}
-        ret[parentid] = parent[parentid]
-        return ret
-
-    def get_kwargs_from_graphql(self, parent, resolve_info, args):
-        if self.isCollection or self.isPseudoCollection:
-            if parent is not None:
-                return self.get_kwargs_from_graphql_parent(
-                    parent, resolve_info.parent_type.name
-                )
-            return {'graphql': True}
-        ret = {'graphql': True}
-        k = self.rtype.keyField
-        v = args.pop(k)
-        if v is not None:
-            ret[k] = v
-        return ret
-
     def __repr__(self):
         return "endpoint for " + ",".join(self.pathPatterns.split())
 
 
-class BuildNestingMixin:
-
+class NestedBuildDataRetriever:
     """
-    A mixin for methods to decipher the many ways a build, step, or log can be
-    specified.
+    Efficiently retrieves data about various entities without repeating same queries over and over.
+    The following arg keys are supported:
+        - stepid
+        - step_name
+        - step_number
+        - buildid
+        - build_number
+        - builderid
+        - buildername
+        - logid
+        - log_slug
+    """
+
+    __slots__ = (
+        'master',
+        'args',
+        'step_dict',
+        'build_dict',
+        'builder_dict',
+        'log_dict',
+        'worker_dict',
+    )
+
+    def __init__(self, master, args) -> None:
+        self.master = master
+        self.args = args
+        # False is used as special value as "not set". None is used as "not exists". This solves
+        # the problem of multiple database queries in case entity does not exist.
+        self.step_dict: StepModel | None | Literal[False] = False
+        self.build_dict: BuildModel | None | Literal[False] = False
+        self.builder_dict: BuilderModel | None | Literal[False] = False
+        self.log_dict: LogModel | None | Literal[False] = False
+        self.worker_dict: WorkerModel | None | Literal[False] = False
+
+    @async_to_deferred
+    async def get_step_dict(self) -> StepModel | None:
+        if self.step_dict is not False:
+            return self.step_dict
+
+        if 'stepid' in self.args:
+            step_dict = self.step_dict = await self.master.db.steps.getStep(
+                stepid=self.args['stepid']
+            )
+            return step_dict
+
+        if 'step_name' in self.args or 'step_number' in self.args:
+            build_dict = await self.get_build_dict()
+            if build_dict is None:
+                self.step_dict = None
+                return None
+
+            step_dict = self.step_dict = await self.master.db.steps.getStep(
+                buildid=build_dict.id,
+                number=self.args.get('step_number'),
+                name=self.args.get('step_name'),
+            )
+            return step_dict
+
+        # fallback when there's only indirect information
+        if 'logid' in self.args:
+            log_dict = await self.get_log_dict()
+            if log_dict is not None:
+                step_dict = self.step_dict = await self.master.db.steps.getStep(
+                    stepid=log_dict.stepid
+                )
+                return step_dict
+
+        self.step_dict = None
+        return self.step_dict
+
+    @async_to_deferred
+    async def get_build_dict(self) -> BuildModel | None:
+        if self.build_dict is not False:
+            return self.build_dict
+
+        if 'buildid' in self.args:
+            build_dict = self.build_dict = await self.master.db.builds.getBuild(
+                self.args['buildid']
+            )
+            return build_dict
+
+        if 'build_number' in self.args:
+            builder_id = await self.get_builder_id()
+
+            if builder_id is None:
+                self.build_dict = None
+                return None
+
+            build_dict = self.build_dict = await self.master.db.builds.getBuildByNumber(
+                builderid=builder_id, number=self.args['build_number']
+            )
+            return build_dict
+
+        # fallback when there's only indirect information
+        step_dict = await self.get_step_dict()
+        if step_dict is not None:
+            build_dict = self.build_dict = await self.master.db.builds.getBuild(step_dict.buildid)
+            return build_dict
+
+        self.build_dict = None
+        return None
+
+    @async_to_deferred
+    async def get_build_id(self):
+        if 'buildid' in self.args:
+            return self.args['buildid']
+
+        build_dict = await self.get_build_dict()
+        if build_dict is None:
+            return None
+        return build_dict.id
+
+    @async_to_deferred
+    async def get_builder_dict(self) -> BuilderModel | None:
+        if self.builder_dict is not False:
+            return self.builder_dict
+
+        if 'builderid' in self.args:
+            builder_dict = self.builder_dict = await self.master.db.builders.getBuilder(
+                self.args['builderid']
+            )
+            return builder_dict
+
+        if 'buildername' in self.args:
+            builder_id = await self.master.db.builders.findBuilderId(
+                self.args['buildername'], autoCreate=False
+            )
+            builder_dict = None
+            if builder_id is not None:
+                builder_dict = await self.master.db.builders.getBuilder(builder_id)
+            self.builder_dict = builder_dict
+            return builder_dict
+
+        # fallback when there's only indirect information
+        build_dict = await self.get_build_dict()
+        if build_dict is not None:
+            builder_dict = self.builder_dict = await self.master.db.builders.getBuilder(
+                build_dict.builderid
+            )
+            return builder_dict
+
+        self.builder_dict = None
+        return None
+
+    @async_to_deferred
+    async def get_builder_id(self) -> int | None:
+        if 'builderid' in self.args:
+            return self.args['builderid']
+
+        builder_dict = await self.get_builder_dict()
+        if builder_dict is None:
+            return None
+        return builder_dict.id
+
+    @async_to_deferred
+    async def get_log_dict(self) -> LogModel | None:
+        if self.log_dict is not False:
+            return self.log_dict
+
+        if 'logid' in self.args:
+            log_dict = self.log_dict = await self.master.db.logs.getLog(self.args['logid'])
+            return log_dict
+
+        step_dict = await self.get_step_dict()
+        if step_dict is None:
+            self.log_dict = None
+            return None
+        log_dict = self.log_dict = await self.master.db.logs.getLogBySlug(
+            step_dict.id, self.args.get('log_slug')
+        )
+        return log_dict
+
+    @async_to_deferred
+    async def get_log_id(self):
+        if 'logid' in self.args:
+            return self.args['logid']
+
+        log_dict = await self.get_log_dict()
+        if log_dict is None:
+            return None
+        return log_dict.id
+
+    @async_to_deferred
+    async def get_worker_dict(self) -> WorkerModel | None:
+        if self.worker_dict is not False:
+            return self.worker_dict
+
+        build_dict = await self.get_build_dict()
+        if build_dict is not None:
+            workerid = build_dict.workerid
+            if workerid is not None:
+                worker_dict = self.worker_dict = await self.master.db.workers.getWorker(
+                    workerid=workerid
+                )
+                return worker_dict
+
+        self.worker_dict = None
+        return None
+
+
+class BuildNestingMixin:
+    """
+    A mixin for methods to decipher the many ways a various entities can be specified.
     """
 
     @defer.inlineCallbacks
     def getBuildid(self, kwargs):
-        # need to look in the context of a step, specified by build or
-        # builder or whatever
-        if 'buildid' in kwargs:
-            return kwargs['buildid']
-        else:
-            builderid = yield self.getBuilderId(kwargs)
-            if builderid is None:
-                return None
-            build = yield self.master.db.builds.getBuildByNumber(
-                builderid=builderid,
-                number=kwargs['build_number'])
-            if not build:
-                return None
-            return build['id']
+        retriever = NestedBuildDataRetriever(self.master, kwargs)
+        return (yield retriever.get_build_id())
 
     @defer.inlineCallbacks
-    def getStepid(self, kwargs):
-        if 'stepid' in kwargs:
-            return kwargs['stepid']
-        else:
-            buildid = yield self.getBuildid(kwargs)
-            if buildid is None:
-                return None
-
-            dbdict = yield self.master.db.steps.getStep(buildid=buildid,
-                                                        number=kwargs.get(
-                                                            'step_number'),
-                                                        name=kwargs.get('step_name'))
-            if not dbdict:
-                return None
-            return dbdict['id']
-
     def getBuilderId(self, kwargs):
-        if 'buildername' in kwargs:
-            return self.master.db.builders.findBuilderId(kwargs['buildername'], autoCreate=False)
-        return defer.succeed(kwargs['builderid'])
+        retriever = NestedBuildDataRetriever(self.master, kwargs)
+        return (yield retriever.get_builder_id())
+
+    # returns Deferred that yields a number
+    def get_project_id(self, kwargs):
+        if "projectname" in kwargs:
+            return self.master.db.projects.find_project_id(kwargs["projectname"], auto_create=False)
+        return defer.succeed(kwargs["projectid"])
 
 
 class ListResult(UserList):
-
     __slots__ = ['offset', 'total', 'limit']
 
-    def __init__(self, values,
-                 offset=None, total=None, limit=None):
+    def __init__(self, values, offset=None, total=None, limit=None):
         super().__init__(values)
 
         # if set, this is the index in the overall results of the first element of
@@ -219,18 +394,25 @@ class ListResult(UserList):
         self.limit = limit
 
     def __repr__(self):
-        return (f"ListResult({repr(self.data)}, offset={repr(self.offset)}, "
-                f"total={repr(self.total)}, limit={repr(self.limit)})")
+        return (
+            f"ListResult({self.data!r}, offset={self.offset!r}, "
+            f"total={self.total!r}, limit={self.limit!r})"
+        )
 
     def __eq__(self, other):
         if isinstance(other, ListResult):
-            return self.data == other.data \
-                and self.offset == other.offset \
-                and self.total == other.total \
+            return (
+                self.data == other.data
+                and self.offset == other.offset
+                and self.total == other.total
                 and self.limit == other.limit
-        return self.data == other \
-            and self.offset == self.limit is None \
+            )
+        return (
+            self.data == other
+            and self.offset is None
+            and self.limit is None
             and (self.total is None or self.total == len(other))
+        )
 
     def __ne__(self, other):
         return not self == other

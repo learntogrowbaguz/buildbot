@@ -17,6 +17,8 @@
 Steps and objects related to lintian
 """
 
+from __future__ import annotations
+
 from twisted.internet import defer
 
 from buildbot import config
@@ -29,7 +31,6 @@ from buildbot.steps.package import util as pkgutil
 
 
 class MaxQObserver(logobserver.LogLineObserver):
-
     def __init__(self):
         super().__init__()
         self.failures = 0
@@ -45,7 +46,7 @@ class DebLintian(buildstep.ShellMixin, buildstep.BuildStep):
     descriptionDone = "Lintian"
 
     fileloc = None
-    suppressTags = []
+    suppressTags: list[str] = []
 
     flunkOnFailure = False
     warnOnFailure = True

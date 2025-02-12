@@ -17,19 +17,41 @@ Miscellaneous utilities; these should be imported from C{buildbot.util}, not
 directly from this module.
 """
 
+from __future__ import annotations
+
 import os
+from functools import wraps
+from typing import TYPE_CHECKING
 
 from twisted.internet import reactor
+from twisted.internet.defer import Deferred
+from twisted.internet.defer import DeferredLock
+
+if TYPE_CHECKING:
+    from typing import Callable
+    from typing import TypeVar
+
+    from typing_extensions import ParamSpec
+
+    _T = TypeVar('_T')
+    _P = ParamSpec('_P')
 
 
-def deferredLocked(lock_or_attr):
-    def decorator(fn):
-        def wrapper(*args, **kwargs):
-            lock = lock_or_attr
-            if isinstance(lock, str):
-                lock = getattr(args[0], lock)
+def deferredLocked(
+    lock_or_attr: str | DeferredLock,
+) -> Callable[[Callable[_P, Deferred[_T]]], Callable[_P, Deferred[_T]]]:
+    def decorator(fn: Callable[_P, Deferred[_T]]) -> Callable[_P, Deferred[_T]]:
+        @wraps(fn)
+        def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> Deferred[_T]:
+            if isinstance(lock_or_attr, str):
+                lock = getattr(args[0], lock_or_attr)
+                assert isinstance(lock, DeferredLock)
+            else:
+                lock = lock_or_attr
             return lock.run(fn, *args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -51,3 +73,8 @@ def writeLocalFile(path, contents, mode=None):  # pragma: no cover
         if mode is not None:
             os.chmod(path, mode)
         file.write(contents)
+
+
+def chunkify_list(l, chunk_size):
+    chunk_size = max(1, chunk_size)
+    return (l[i : i + chunk_size] for i in range(0, len(l), chunk_size))

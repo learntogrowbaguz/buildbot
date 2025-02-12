@@ -13,10 +13,9 @@
 #
 # Copyright Buildbot Team Members
 
+from unittest import mock
+
 from parameterized import parameterized
-
-import mock
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
@@ -25,7 +24,6 @@ from buildbot.util import poll
 
 
 class TestPollerSync(TestReactorMixin, unittest.TestCase):
-
     @poll.method
     def poll(self):
         self.calls += 1
@@ -41,9 +39,11 @@ class TestPollerSync(TestReactorMixin, unittest.TestCase):
         self.calls = 0
         self.fail_after_running = False
 
-    def tearDown(self):
-        poll.reset_poll_methods()
-        self.assertEqual(self.reactor.getDelayedCalls(), [])
+        def cleanup():
+            poll.reset_poll_methods()
+            self.assertEqual(self.reactor.getDelayedCalls(), [])
+
+        self.addCleanup(cleanup)
 
     def test_call_not_started_does_nothing(self):
         self.reactor.advance(100)
@@ -84,7 +84,7 @@ class TestPollerSync(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_start_twice_error(self):
         self.poll.start(interval=1)
-        with self.assertRaises(Exception):
+        with self.assertRaises(AssertionError):
             self.poll.start(interval=2)
         yield self.poll.stop()
 
@@ -175,7 +175,6 @@ class TestPollerSync(TestReactorMixin, unittest.TestCase):
 
 
 class TestPollerAsync(TestReactorMixin, unittest.TestCase):
-
     @poll.method
     @defer.inlineCallbacks
     def poll(self):
@@ -203,8 +202,7 @@ class TestPollerAsync(TestReactorMixin, unittest.TestCase):
         self.duration = 1
         self.fail_after_running = False
 
-    def tearDown(self):
-        poll.reset_poll_methods()
+        self.addCleanup(poll.reset_poll_methods)
 
     @defer.inlineCallbacks
     def test_call_when_started_forces_run(self):
@@ -218,9 +216,9 @@ class TestPollerAsync(TestReactorMixin, unittest.TestCase):
         yield self.poll.stop()
 
     def test_repeats_and_stops(self):
-        """ Polling repeats until stopped, and stop returns a Deferred.  The
+        """Polling repeats until stopped, and stop returns a Deferred.  The
         duration of the function's execution does not affect the execution
-        interval: executions occur every 10 seconds.  """
+        interval: executions occur every 10 seconds."""
         self.poll.start(interval=10, now=True)
         self.reactor.advance(0)
 

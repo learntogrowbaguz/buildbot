@@ -13,6 +13,10 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from twisted.internet import defer
 from twisted.internet import reactor
 from twisted.python import log
@@ -25,6 +29,12 @@ from buildbot.steps.source.base import Source
 from buildbot.steps.worker import CompositeStepMixin
 from buildbot.util.git import RC_SUCCESS
 from buildbot.util.git import GitStepMixin
+from buildbot.util.git_credential import GitCredentialOptions
+from buildbot.util.git_credential import add_user_password_to_credentials
+
+if TYPE_CHECKING:
+    from buildbot.interfaces import IRenderable
+
 
 GIT_HASH_LENGTH = 40
 
@@ -53,11 +63,12 @@ git_describe_flags = [
     ('long', lambda v: ['--long'] if v else None),
     ('exact-match', lambda v: ['--exact-match'] if v else None),
     ('tags', lambda v: ['--tags'] if v else None),
+    ('first-parent', lambda v: ['--first-parent'] if v else None),
     # string parameter
     ('match', lambda v: ['--match', v] if v else None),
+    ('exclude', lambda v: ['--exclude', v] if v else None),
     # numeric parameter
-    ('abbrev', lambda v: [f'--abbrev={v}']
-     if isTrueOrIsExactlyZero(v) else None),
+    ('abbrev', lambda v: [f'--abbrev={v}'] if isTrueOrIsExactlyZero(v) else None),
     ('candidates', lambda v: [f'--candidates={v}'] if isTrueOrIsExactlyZero(v) else None),
     # optional string parameter
     ('dirty', lambda v: ['--dirty'] if (v is True or v == '') else None),
@@ -66,36 +77,53 @@ git_describe_flags = [
 
 
 class Git(Source, GitStepMixin):
-
     name = 'git'
-    renderables = ["repourl", "reference", "branch",
-                   "codebase", "mode", "method", "origin"]
+    renderables = ["repourl", "reference", "branch", "codebase", "mode", "method", "origin"]
 
-    def __init__(self, repourl=None, branch='HEAD', mode='incremental', method=None,
-                 reference=None, submodules=False, remoteSubmodules=False, shallow=False,
-                 filters=None, progress=True, retryFetch=False, clobberOnFailure=False,
-                 getDescription=False, config=None, origin=None, sshPrivateKey=None,
-                 sshHostKey=None, sshKnownHosts=None, **kwargs):
-
+    def __init__(
+        self,
+        repourl=None,
+        port=22,
+        branch='HEAD',
+        mode='incremental',
+        method=None,
+        reference=None,
+        submodules=False,
+        remoteSubmodules=False,
+        tags=False,
+        shallow=False,
+        filters=None,
+        progress=True,
+        retryFetch=False,
+        clobberOnFailure=False,
+        getDescription=False,
+        config=None,
+        origin=None,
+        sshPrivateKey=None,
+        sshHostKey=None,
+        sshKnownHosts=None,
+        auth_credentials: tuple[IRenderable | str, IRenderable | str] | None = None,
+        git_credentials: GitCredentialOptions | None = None,
+        **kwargs,
+    ):
         if not getDescription and not isinstance(getDescription, dict):
             getDescription = False
 
         self.branch = branch
         self.method = method
         self.repourl = repourl
+        self.port = port
         self.reference = reference
         self.retryFetch = retryFetch
         self.submodules = submodules
         self.remoteSubmodules = remoteSubmodules
+        self.tags = tags
         self.shallow = shallow
         self.filters = filters
         self.clobberOnFailure = clobberOnFailure
         self.mode = mode
         self.prog = progress
         self.getDescription = getDescription
-        self.sshPrivateKey = sshPrivateKey
-        self.sshHostKey = sshHostKey
-        self.sshKnownHosts = sshKnownHosts
         self.config = config
         self.srcdir = 'source'
         self.origin = origin
@@ -103,28 +131,51 @@ class Git(Source, GitStepMixin):
         super().__init__(**kwargs)
 
         self.setupGitStep()
+        if auth_credentials is not None:
+            git_credentials = add_user_password_to_credentials(
+                auth_credentials,
+                repourl,
+                git_credentials,
+            )
+
+        self.setup_git_auth(
+            sshPrivateKey,
+            sshHostKey,
+            sshKnownHosts,
+            git_credentials,
+        )
 
         if isinstance(self.mode, str):
             if not self._hasAttrGroupMember('mode', self.mode):
                 bbconfig.error(
-                    f"Git: mode must be {' or '.join(self._listAttrGroupMembers('mode'))}")
+                    f"Git: mode must be {' or '.join(self._listAttrGroupMembers('mode'))}"
+                )
             if isinstance(self.method, str):
-                if self.mode == 'full' and \
-                        self.method not in ['clean', 'fresh', 'clobber', 'copy', None]:
+                if self.mode == 'full' and self.method not in [
+                    'clean',
+                    'fresh',
+                    'clobber',
+                    'copy',
+                    None,
+                ]:
                     bbconfig.error("Git: invalid method for mode 'full'.")
                 if self.shallow and (self.mode != 'full' or self.method != 'clobber'):
                     bbconfig.error(
-                        "Git: shallow only possible with mode 'full' and method 'clobber'.")
+                        "Git: in mode 'full' shallow only possible with method 'clobber'."
+                    )
         if not isinstance(self.getDescription, (bool, dict)):
             bbconfig.error("Git: getDescription must be a boolean or a dict.")
 
     @defer.inlineCallbacks
     def run_vc(self, branch, revision, patch):
+        self.setup_repourl()
         self.branch = branch or 'HEAD'
         self.revision = revision
 
         self.method = self._getMethod()
         self.stdio_log = yield self.addLogForRemoteCommands("stdio")
+
+        auth_workdir = self._get_auth_data_workdir()
 
         try:
             gitInstalled = yield self.checkFeatureSupport()
@@ -137,17 +188,16 @@ class Git(Source, GitStepMixin):
             if patched:
                 yield self._dovccmd(['clean', '-f', '-f', '-d', '-x'])
 
-            yield self._downloadSshPrivateKeyIfNeeded()
+            yield self._git_auth.download_auth_files_if_needed(auth_workdir)
+
             yield self._getAttrGroupMember('mode', self.mode)()
             if patch:
                 yield self.patch(patch)
             yield self.parseGotRevision()
             res = yield self.parseCommitDescription()
-            yield self._removeSshPrivateKeyIfNeeded()
             return res
-        except Exception:
-            yield self._removeSshPrivateKeyIfNeeded()
-            raise
+        finally:
+            yield self._git_auth.remove_auth_files_if_needed(auth_workdir)
 
     @defer.inlineCallbacks
     def mode_full(self):
@@ -164,7 +214,7 @@ class Git(Source, GitStepMixin):
             return
         elif action == "clone":
             log.msg("No git repo present, making full clone")
-            yield self._fullCloneOrFallback()
+            yield self._fullCloneOrFallback(self.shallow)
         elif self.method == 'clean':
             yield self.clean()
         elif self.method == 'fresh':
@@ -181,7 +231,7 @@ class Git(Source, GitStepMixin):
             return
         elif action == "clone":
             log.msg("No git repo present, making full clone")
-            yield self._fullCloneOrFallback()
+            yield self._fullCloneOrFallback(shallowClone=self.shallow)
             return
 
         yield self._fetchOrFallback()
@@ -225,13 +275,12 @@ class Git(Source, GitStepMixin):
     @defer.inlineCallbacks
     def fresh(self):
         clean_command = ['clean', '-f', '-f', '-d', '-x']
-        res = yield self._dovccmd(clean_command,
-                                  abandonOnFailure=False)
+        res = yield self._dovccmd(clean_command, abandonOnFailure=False)
         if res == RC_SUCCESS:
             yield self._fetchOrFallback()
         else:
             yield self._doClobber()
-            yield self._fullCloneOrFallback()
+            yield self._fullCloneOrFallback(shallowClone=self.shallow)
         yield self._syncSubmodule()
         yield self._updateSubmodule()
         yield self._cleanSubmodule()
@@ -240,19 +289,22 @@ class Git(Source, GitStepMixin):
 
     @defer.inlineCallbacks
     def copy(self):
-        yield self.runRmdir(self.workdir, abandonOnFailure=False,
-                            timeout=self.timeout)
+        yield self.runRmdir(self.workdir, abandonOnFailure=False, timeout=self.timeout)
 
         old_workdir = self.workdir
         self.workdir = self.srcdir
 
         try:
             yield self.mode_incremental()
-            cmd = remotecommand.RemoteCommand('cpdir',
-                                              {'fromdir': self.srcdir,
-                                               'todir': old_workdir,
-                                               'logEnviron': self.logEnviron,
-                                               'timeout': self.timeout, })
+            cmd = remotecommand.RemoteCommand(
+                'cpdir',
+                {
+                    'fromdir': self.srcdir,
+                    'todir': old_workdir,
+                    'logEnviron': self.logEnviron,
+                    'timeout': self.timeout,
+                },
+            )
             cmd.useLog(self.stdio_log, False)
             yield self.runCommand(cmd)
             if cmd.didFail():
@@ -299,24 +351,29 @@ class Git(Source, GitStepMixin):
 
         return RC_SUCCESS
 
-    def _getSshDataWorkDir(self):
+    def _get_auth_data_workdir(self):
         if self.method == 'copy' and self.mode == 'full':
             return self.srcdir
         return self.workdir
 
     @defer.inlineCallbacks
-    def _fetch(self, _):
+    def _fetch(self, _, shallowClone, abandonOnFailure=True):
         fetch_required = True
 
-        # If the revision already exists in the repo, we don't need to fetch.
-        if self.revision:
-            rc = yield self._dovccmd(['cat-file', '-e', self.revision],
-                                     abandonOnFailure=False)
+        # If the revision already exists in the repo, we don't need to fetch. However, if tags
+        # were requested, then fetch still needs to be performed for the tags.
+        if not self.tags and self.revision:
+            rc = yield self._dovccmd(['cat-file', '-e', self.revision], abandonOnFailure=False)
             if rc == RC_SUCCESS:
                 fetch_required = False
 
         if fetch_required:
-            command = ['fetch', '-f', '-t', self.repourl, self.branch]
+            command = ['fetch', '-f']
+            if shallowClone:
+                command += ['--depth', str(int(shallowClone))]
+            if self.tags:
+                command.append("--tags")
+
             # If the 'progress' option is set, tell git fetch to output
             # progress information to the log. This can solve issues with
             # long fetches killed due to lack of output, but only works
@@ -327,15 +384,17 @@ class Git(Source, GitStepMixin):
                 else:
                     log.msg("Git versions < 1.7.2 don't support progress")
 
-            yield self._dovccmd(command)
+            command += [self.repourl, self.branch]
+            res = yield self._dovccmd(command, abandonOnFailure=abandonOnFailure)
+            if res != RC_SUCCESS:
+                return res
 
         if self.revision:
             rev = self.revision
         else:
             rev = 'FETCH_HEAD'
         command = ['checkout', '-f', rev]
-        abandonOnFailure = not self.retryFetch and not self.clobberOnFailure
-        res = yield self._dovccmd(command, abandonOnFailure)
+        res = yield self._dovccmd(command, abandonOnFailure=abandonOnFailure)
 
         # Rename the branch if needed.
         if res == RC_SUCCESS and self.branch != 'HEAD':
@@ -350,11 +409,14 @@ class Git(Source, GitStepMixin):
         Handles fallbacks for failure of fetch,
         wrapper for self._fetch
         """
-        res = yield self._fetch(None)
+
+        abandonOnFailure = not self.retryFetch and not self.clobberOnFailure
+
+        res = yield self._fetch(None, shallowClone=self.shallow, abandonOnFailure=abandonOnFailure)
         if res == RC_SUCCESS:
             return res
         elif self.retryFetch:
-            yield self._fetch(None)
+            yield self._fetch(None, shallowClone=self.shallow)
         elif self.clobberOnFailure:
             yield self.clobber()
         else:
@@ -395,14 +457,14 @@ class Git(Source, GitStepMixin):
             else:
                 log.msg("Git versions < 1.7.2 don't support progress")
         if self.retry:
-            abandonOnFailure = (self.retry[1] <= 0)
+            abandonOnFailure = self.retry[1] <= 0
         else:
             abandonOnFailure = True
         # If it's a shallow clone abort build step
         res = yield self._dovccmd(command, abandonOnFailure=(abandonOnFailure and shallowClone))
 
         if switchToBranch:
-            res = yield self._fetch(None)
+            res = yield self._fetch(None, shallowClone=shallowClone)
 
         done = self.stopped or res == RC_SUCCESS  # or shallow clone??
         if self.retry and not done:
@@ -422,7 +484,7 @@ class Git(Source, GitStepMixin):
     @defer.inlineCallbacks
     def _fullClone(self, shallowClone=False):
         """Perform full clone and checkout to the revision if specified
-           In the case of shallow clones if any of the step fail abort whole build step.
+        In the case of shallow clones if any of the step fail abort whole build step.
         """
         res = yield self._clone(shallowClone)
         if res != RC_SUCCESS:
@@ -438,17 +500,19 @@ class Git(Source, GitStepMixin):
             cmdArgs = ["submodule", "update", "--init", "--recursive"]
             if self.remoteSubmodules:
                 cmdArgs.append("--remote")
+            if shallowClone:
+                cmdArgs.extend(["--depth", str(int(shallowClone))])
             res = yield self._dovccmd(cmdArgs, shallowClone)
 
         return res
 
     @defer.inlineCallbacks
-    def _fullCloneOrFallback(self):
+    def _fullCloneOrFallback(self, shallowClone):
         """Wrapper for _fullClone(). In the case of failure, if clobberOnFailure
-           is set to True remove the build directory and try a full clone again.
+        is set to True remove the build directory and try a full clone again.
         """
 
-        res = yield self._fullClone()
+        res = yield self._fullClone(shallowClone)
         if res != RC_SUCCESS:
             if not self.clobberOnFailure:
                 raise buildstep.BuildStepFailed()
@@ -528,8 +592,7 @@ class Git(Source, GitStepMixin):
 
             return "clone"
 
-        cmd = remotecommand.RemoteCommand('listdir',
-                                          {'dir': self.workdir})
+        cmd = remotecommand.RemoteCommand('listdir', {'dir': self.workdir})
         cmd.useLog(self.stdio_log, False)
         yield self.runCommand(cmd)
 
@@ -546,7 +609,6 @@ class Git(Source, GitStepMixin):
 
 
 class GitPush(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
-
     description = None
     descriptionDone = None
     descriptionSuffix = None
@@ -554,50 +616,75 @@ class GitPush(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
     name = 'gitpush'
     renderables = ['repourl', 'branch']
 
-    def __init__(self, workdir=None, repourl=None, branch=None, force=False,
-                 env=None, timeout=20 * 60, logEnviron=True,
-                 sshPrivateKey=None, sshHostKey=None, sshKnownHosts=None,
-                 config=None, **kwargs):
-
+    def __init__(
+        self,
+        workdir=None,
+        repourl=None,
+        port=22,
+        branch=None,
+        force=False,
+        env=None,
+        timeout=20 * 60,
+        logEnviron=True,
+        sshPrivateKey=None,
+        sshHostKey=None,
+        sshKnownHosts=None,
+        auth_credentials: tuple[IRenderable | str, IRenderable | str] | None = None,
+        git_credentials: GitCredentialOptions | None = None,
+        config=None,
+        **kwargs,
+    ):
         self.workdir = workdir
         self.repourl = repourl
+        self.port = port
         self.branch = branch
         self.force = force
         self.env = env
         self.timeout = timeout
         self.logEnviron = logEnviron
-        self.sshPrivateKey = sshPrivateKey
-        self.sshHostKey = sshHostKey
-        self.sshKnownHosts = sshKnownHosts
         self.config = config
 
         super().__init__(**kwargs)
 
         self.setupGitStep()
+        if auth_credentials is not None:
+            git_credentials = add_user_password_to_credentials(
+                auth_credentials,
+                repourl,
+                git_credentials,
+            )
+
+        self.setup_git_auth(
+            sshPrivateKey,
+            sshHostKey,
+            sshKnownHosts,
+            git_credentials,
+        )
 
         if not self.branch:
             bbconfig.error('GitPush: must provide branch')
 
-    def _getSshDataWorkDir(self):
+    def _get_auth_data_workdir(self):
         return self.workdir
 
     @defer.inlineCallbacks
     def run(self):
+        self.setup_repourl()
         self.stdio_log = yield self.addLog("stdio")
+
+        auth_workdir = self._get_auth_data_workdir()
+
         try:
             gitInstalled = yield self.checkFeatureSupport()
 
             if not gitInstalled:
                 raise WorkerSetupError("git is not installed on worker")
 
-            yield self._downloadSshPrivateKeyIfNeeded()
+            yield self._git_auth.download_auth_files_if_needed(auth_workdir)
             ret = yield self._doPush()
-            yield self._removeSshPrivateKeyIfNeeded()
             return ret
-
-        except Exception as e:
-            yield self._removeSshPrivateKeyIfNeeded()
-            raise e
+        finally:
+            yield self._git_auth.remove_auth_files_if_needed(auth_workdir)
 
     @defer.inlineCallbacks
     def _doPush(self):
@@ -610,7 +697,6 @@ class GitPush(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
 
 
 class GitTag(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
-
     description = None
     descriptionDone = None
     descriptionSuffix = None
@@ -618,10 +704,19 @@ class GitTag(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
     name = 'gittag'
     renderables = ['repourl', 'tagName', 'messages']
 
-    def __init__(self, workdir=None, tagName=None,
-                 annotated=False, messages=None, force=False, env=None,
-                 timeout=20 * 60, logEnviron=True, config=None, **kwargs):
-
+    def __init__(
+        self,
+        workdir=None,
+        tagName=None,
+        annotated=False,
+        messages=None,
+        force=False,
+        env=None,
+        timeout=20 * 60,
+        logEnviron=True,
+        config=None,
+        **kwargs,
+    ):
         self.workdir = workdir
         self.tagName = tagName
         self.annotated = annotated
@@ -634,9 +729,7 @@ class GitTag(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
 
         # These attributes are required for GitStepMixin but not useful to tag
         self.repourl = " "
-        self.sshHostKey = None
-        self.sshPrivateKey = None
-        self.sshKnownHosts = None
+        self.port = None
 
         super().__init__(**kwargs)
 
@@ -686,7 +779,6 @@ class GitTag(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
 
 
 class GitCommit(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
-
     description = None
     descriptionDone = None
     descriptionSuffix = None
@@ -694,10 +786,19 @@ class GitCommit(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
     name = 'gitcommit'
     renderables = ['paths', 'messages']
 
-    def __init__(self, workdir=None, paths=None, messages=None, env=None,
-                 timeout=20 * 60, logEnviron=True, emptyCommits='disallow',
-                 config=None, no_verify=False, **kwargs):
-
+    def __init__(
+        self,
+        workdir=None,
+        paths=None,
+        messages=None,
+        env=None,
+        timeout=20 * 60,
+        logEnviron=True,
+        emptyCommits='disallow',
+        config=None,
+        no_verify=False,
+        **kwargs,
+    ):
         self.workdir = workdir
         self.messages = messages
         self.paths = paths
@@ -707,12 +808,10 @@ class GitCommit(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
         self.config = config
         self.emptyCommits = emptyCommits
         self.no_verify = no_verify
-        # The repourl, sshPrivateKey and sshHostKey attributes are required by
-        # GitStepMixin, but aren't needed by git add and commit operations
+        # The repourl attribute is required by
+        # GitStepMixin, but isn't needed by git add and commit operations
         self.repourl = " "
-        self.sshPrivateKey = None
-        self.sshHostKey = None
-        self.sshKnownHosts = None
+        self.port = None
 
         super().__init__(**kwargs)
 
@@ -731,8 +830,10 @@ class GitCommit(buildstep.BuildStep, GitStepMixin, CompositeStepMixin):
             bbconfig.error('GitCommit: paths must be a list')
 
         if self.emptyCommits not in ('disallow', 'create-empty-commit', 'ignore'):
-            bbconfig.error('GitCommit: emptyCommits must be one of "disallow", '
-                           '"create-empty-commit" and "ignore"')
+            bbconfig.error(
+                'GitCommit: emptyCommits must be one of "disallow", '
+                '"create-empty-commit" and "ignore"'
+            )
 
     @defer.inlineCallbacks
     def run(self):

@@ -15,13 +15,10 @@
 
 
 # this is here for compatibility
-from collections import defaultdict
-
-assert defaultdict
+from collections import defaultdict  # noqa: F401
 
 
 class KeyedSets:
-
     def __init__(self):
         self.d = {}
 

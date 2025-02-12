@@ -33,41 +33,49 @@ from .utils import merge_reports_prop_take_first
 
 ENCODING = 'utf8'
 
-VALID_PARAMS = {"sound", "callback", "timestamp", "url",
-                "url_title", "device", "retry", "expire", "html"}
+VALID_PARAMS = {
+    "sound",
+    "callback",
+    "timestamp",
+    "url",
+    "url_title",
+    "device",
+    "retry",
+    "expire",
+    "html",
+}
 
 PRIORITIES = {
     CANCELLED: 'cancelled',
     EXCEPTION: 'exception',
     FAILURE: 'failing',
     SUCCESS: 'passing',
-    WARNINGS: 'warnings'
+    WARNINGS: 'warnings',
 }
 
-DEFAULT_MSG_TEMPLATE = \
-    ('The Buildbot has detected a <a href="{{ build_url }}">{{ status_detected }}</a>' +
-     'of <i>{{ buildername }}</i> while building {{ projects }} on {{ workername }}.')
+DEFAULT_MSG_TEMPLATE = (
+    'The Buildbot has detected a <a href="{{ build_url }}">{{ status_detected }}</a>'
+    + 'of <i>{{ buildername }}</i> while building {{ projects }} on {{ workername }}.'
+)
 
 
 class PushoverNotifier(ReporterBase):
-
-    def checkConfig(self, user_key, api_token, priorities=None, otherParams=None,
-                    generators=None):
-
+    def checkConfig(self, user_key, api_token, priorities=None, otherParams=None, generators=None):
         if generators is None:
             generators = self._create_default_generators()
 
         super().checkConfig(generators=generators)
 
-        httpclientservice.HTTPClientService.checkAvailable(self.__class__.__name__)
-
         if otherParams is not None and set(otherParams.keys()) - VALID_PARAMS:
-            config.error("otherParams can be only 'sound', 'callback', 'timestamp', "
-                         "'url', 'url_title', 'device', 'retry', 'expire', or 'html'")
+            config.error(
+                "otherParams can be only 'sound', 'callback', 'timestamp', "
+                "'url', 'url_title', 'device', 'retry', 'expire', or 'html'"
+            )
 
     @defer.inlineCallbacks
-    def reconfigService(self, user_key, api_token, priorities=None, otherParams=None,
-                        generators=None):
+    def reconfigService(
+        self, user_key, api_token, priorities=None, otherParams=None, generators=None
+    ):
         user_key, api_token = yield self.renderSecrets(user_key, api_token)
 
         if generators is None:
@@ -84,8 +92,9 @@ class PushoverNotifier(ReporterBase):
             self.otherParams = {}
         else:
             self.otherParams = otherParams
-        self._http = yield httpclientservice.HTTPClientService.getService(
-            self.master, 'https://api.pushover.net')
+        self._http = yield httpclientservice.HTTPSession(
+            self.master.httpservice, 'https://api.pushover.net'
+        )
 
     def _create_default_generators(self):
         formatter = MessageFormatter(template_type='html', template=DEFAULT_MSG_TEMPLATE)
@@ -98,10 +107,7 @@ class PushoverNotifier(ReporterBase):
         results = merge_reports_prop(reports, 'results')
         worker = merge_reports_prop_take_first(reports, 'worker')
 
-        msg = {
-            'message': body,
-            'title': subject
-        }
+        msg = {'message': body, 'title': subject}
         if type == 'html':
             msg['html'] = '1'
         try:
@@ -113,6 +119,6 @@ class PushoverNotifier(ReporterBase):
 
     def sendNotification(self, params):
         twlog.msg("sending pushover notification")
-        params.update(dict(user=self.user_key, token=self.api_token))
+        params.update({"user": self.user_key, "token": self.api_token})
         params.update(self.otherParams)
         return self._http.post('/1/messages.json', params=params)

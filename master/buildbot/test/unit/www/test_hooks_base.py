@@ -11,17 +11,15 @@ from buildbot.www.change_hook import ChangeHookResource
 from buildbot.www.hooks.base import BaseHookHandler
 
 
+@defer.inlineCallbacks
 def _prepare_base_change_hook(testcase, **options):
-    return ChangeHookResource(dialects={
-        'base': options
-    }, master=fakeMasterForHooks(testcase))
+    master = yield fakeMasterForHooks(testcase)
+    return ChangeHookResource(dialects={'base': options}, master=master)
 
 
 def _prepare_request(payload, headers=None):
     if headers is None:
-        headers = {
-            b"Content-type": b"application/x-www-form-urlencoded",
-            b"Accept": b"text/plain"}
+        headers = {b"Content-type": b"application/x-www-form-urlencoded", b"Accept": b"text/plain"}
     else:
         headers = {}
 
@@ -38,10 +36,11 @@ def _prepare_request(payload, headers=None):
     return request
 
 
-class TestChangeHookConfiguredWithBase(unittest.TestCase, TestReactorMixin):
+class TestChangeHookConfiguredWithBase(TestReactorMixin, unittest.TestCase):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.changeHook = _prepare_base_change_hook(self)
+        self.changeHook = yield _prepare_base_change_hook(self)
 
     @defer.inlineCallbacks
     def _check_base_with_change(self, payload):
@@ -68,23 +67,20 @@ class TestChangeHookConfiguredWithBase(unittest.TestCase, TestReactorMixin):
         self.assertEqual(change['properties'], props)
 
         self.assertEqual(
-            change['author'],
-            _first_or_nothing(payload.get(b'author', payload.get(b'who'))))
+            change['author'], _first_or_nothing(payload.get(b'author', payload.get(b'who')))
+        )
 
-        for field in ('revision', 'committer', 'comments', 'branch', 'category',
-                      'revlink'):
-            self.assertEqual(
-                change[field], _first_or_nothing(payload.get(field.encode())))
+        for field in ('revision', 'committer', 'comments', 'branch', 'category', 'revlink'):
+            self.assertEqual(change[field], _first_or_nothing(payload.get(field.encode())))
 
         for field in ('repository', 'project'):
-            self.assertEqual(
-                change[field], _first_or_nothing(payload.get(field.encode())) or '')
+            self.assertEqual(change[field], _first_or_nothing(payload.get(field.encode())) or '')
 
     def test_base_with_no_change(self):
         return self._check_base_with_change({})
 
     def test_base_with_changes(self):
-        self._check_base_with_change({
+        return self._check_base_with_change({
             b'revision': [b'1234badcaca5678'],
             b'branch': [b'master'],
             b'comments': [b'Fix foo bar'],
@@ -99,21 +95,23 @@ class TestChangeHookConfiguredWithBase(unittest.TestCase, TestReactorMixin):
         })
 
 
-class TestChangeHookConfiguredWithCustomBase(unittest.TestCase,
-                                             TestReactorMixin):
+class TestChangeHookConfiguredWithCustomBase(TestReactorMixin, unittest.TestCase):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
 
         class CustomBase(BaseHookHandler):
             def getChanges(self, request):
                 args = request.args
-                chdict = dict(
-                              revision=args.get(b'revision'),
-                              repository=args.get(b'_repository') or '',
-                              project=args.get(b'project') or '',
-                              codebase=args.get(b'codebase'))
+                chdict = {
+                    "revision": args.get(b'revision'),
+                    "repository": args.get(b'_repository') or '',
+                    "project": args.get(b'project') or '',
+                    "codebase": args.get(b'codebase'),
+                }
                 return ([chdict], None)
-        self.changeHook = _prepare_base_change_hook(self, custom_class=CustomBase)
+
+        self.changeHook = yield _prepare_base_change_hook(self, custom_class=CustomBase)
 
     @defer.inlineCallbacks
     def _check_base_with_change(self, payload):

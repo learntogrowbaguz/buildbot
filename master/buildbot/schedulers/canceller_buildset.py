@@ -13,6 +13,9 @@
 #
 # Copyright Buildbot Team Members
 
+from typing import ClassVar
+from typing import Sequence
+
 from twisted.internet import defer
 
 from buildbot import config
@@ -49,8 +52,7 @@ class _FailingBuilderConfig:
 
 
 class FailingBuildsetCanceller(BuildbotService):
-
-    compare_attrs = BuildbotService.compare_attrs + ('filters',)
+    compare_attrs: ClassVar[Sequence[str]] = (*BuildbotService.compare_attrs, 'filters')
 
     def checkConfig(self, name, filters):
         FailingBuildsetCanceller.check_filters(filters)
@@ -65,9 +67,9 @@ class FailingBuildsetCanceller(BuildbotService):
     @defer.inlineCallbacks
     def startService(self):
         yield super().startService()
-        self._build_finished_consumer = \
-            yield self.master.mq.startConsuming(self._on_build_finished,
-                                                ('builds', None, 'finished'))
+        self._build_finished_consumer = yield self.master.mq.startConsuming(
+            self._on_build_finished, ('builds', None, 'finished')
+        )
 
     @defer.inlineCallbacks
     def stopService(self):
@@ -79,13 +81,18 @@ class FailingBuildsetCanceller(BuildbotService):
             config.error(f'{cls.__name__}: The filters argument must be a list of tuples')
 
         for filter in filters:
-            if not isinstance(filter, tuple) or \
-                    len(filter) != 3 or \
-                    not isinstance(filter[2], SourceStampFilter):
-                config.error(('{}: The filters argument must be a list of tuples each of which ' +
-                              'contains builders to track as the first item, builders to cancel ' +
-                              'as the second and SourceStampFilter as the third'
-                              ).format(cls.__name__))
+            if (
+                not isinstance(filter, tuple)
+                or len(filter) != 3
+                or not isinstance(filter[2], SourceStampFilter)
+            ):
+                config.error(
+                    (
+                        '{}: The filters argument must be a list of tuples each of which '
+                        + 'contains builders to track as the first item, builders to cancel '
+                        + 'as the second and SourceStampFilter as the third'
+                    ).format(cls.__name__)
+                )
 
             builders, builders_to_cancel, _ = filter
 
@@ -94,7 +101,7 @@ class FailingBuildsetCanceller(BuildbotService):
                 if builders_to_cancel is not None:
                     extract_filter_values(builders_to_cancel, 'builders_to_cancel')
             except Exception as e:
-                config.error(f'{cls.__name__}: When processing filter builders: {str(e)}')
+                config.error(f'{cls.__name__}: When processing filter builders: {e!s}')
 
     @classmethod
     def filter_tuples_to_filter_set_object(cls, filters):
@@ -135,11 +142,17 @@ class FailingBuildsetCanceller(BuildbotService):
 
         all_bs_buildrequests = yield self.master.data.get(
             ('buildrequests',),
-            filters=[resultspec.Filter('buildsetid', 'eq', [buildset['bsid']]),
-                     resultspec.Filter('complete', 'eq', [False])])
+            filters=[
+                resultspec.Filter('buildsetid', 'eq', [buildset['bsid']]),
+                resultspec.Filter('complete', 'eq', [False]),
+            ],
+        )
 
-        all_bs_buildrequests = [br for br in all_bs_buildrequests
-                                if br['buildrequestid'] != buildrequest['buildrequestid']]
+        all_bs_buildrequests = [
+            br
+            for br in all_bs_buildrequests
+            if br['buildrequestid'] != buildrequest['buildrequestid']
+        ]
 
         for br in all_bs_buildrequests:
             brid = br['buildrequestid']

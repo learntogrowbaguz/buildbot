@@ -13,9 +13,6 @@
 #
 # Copyright Buildbot Team Members
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 from twisted.trial import unittest
 
 from buildbot_worker.commands import registry
@@ -23,7 +20,6 @@ from buildbot_worker.commands import shell
 
 
 class Registry(unittest.TestCase):
-
     def test_getFactory(self):
         factory = registry.getFactory('shell')
         self.assertEqual(factory, shell.WorkerShellCommand)

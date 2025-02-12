@@ -13,8 +13,6 @@
 #
 # Copyright Buildbot Team Members
 
-from future.utils import text_type
-
 import itertools
 import textwrap
 import time
@@ -51,8 +49,7 @@ def now(_reactor=None):
     return time.time()
 
 
-class Obfuscated(object):
-
+class Obfuscated:
     """An obfuscated string in a command"""
 
     def __init__(self, real, fake):
@@ -66,13 +63,15 @@ class Obfuscated(object):
         return repr(self.fake)
 
     def __eq__(self, other):
-        return other.__class__ is self.__class__ and \
-            other.real == self.real and \
-            other.fake == self.fake
+        return (
+            other.__class__ is self.__class__
+            and other.real == self.real
+            and other.fake == self.fake
+        )
 
     @staticmethod
     def to_text(s):
-        if isinstance(s, (text_type, bytes)):
+        if isinstance(s, (str, bytes)):
             return s
         return str(s)
 
@@ -125,8 +124,7 @@ def rewrap(text, width=None):
 
     # Split text by lines and group lines that comprise paragraphs.
     wrapped_text = ""
-    for do_wrap, lines in itertools.groupby(text.splitlines(True),
-                                            key=needs_wrapping):
+    for do_wrap, lines in itertools.groupby(text.splitlines(True), key=needs_wrapping):
         paragraph = ''.join(lines)
 
         if do_wrap:
@@ -135,3 +133,32 @@ def rewrap(text, width=None):
         wrapped_text += paragraph
 
     return wrapped_text
+
+
+def twisted_connection_string_to_ws_url(description):
+    from twisted.internet.endpoints import _parse
+
+    args, kwargs = _parse(description)
+    protocol = args.pop(0).upper()
+
+    host = kwargs.get('host', None)
+    port = kwargs.get('port', None)
+
+    if protocol == 'TCP':
+        port = kwargs.get('port', 80)
+
+        if len(args) == 2:
+            host = args[0]
+            port = args[1]
+        elif len(args) == 1:
+            if "host" in kwargs:
+                host = kwargs['host']
+                port = args[0]
+            else:
+                host = args[0]
+                port = kwargs.get('port', port)
+
+    if host is None or host == '' or port is None:
+        raise ValueError('Host and port must be specified in connection string')
+
+    return f"ws://{host}:{port}"

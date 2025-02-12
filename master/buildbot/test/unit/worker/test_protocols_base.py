@@ -13,7 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-import mock
+from unittest import mock
 
 from twisted.trial import unittest
 
@@ -23,18 +23,14 @@ from buildbot.test.util import protocols
 from buildbot.worker.protocols import base
 
 
-class TestFakeConnection(protocols.ConnectionInterfaceTest,
-                         TestReactorMixin, unittest.TestCase):
-
+class TestFakeConnection(protocols.ConnectionInterfaceTest, TestReactorMixin, unittest.TestCase):
     def setUp(self):
         self.setup_test_reactor()
         self.worker = mock.Mock()
         self.conn = fakeprotocol.FakeConnection(self.worker)
 
 
-class TestConnection(protocols.ConnectionInterfaceTest,
-                     TestReactorMixin, unittest.TestCase):
-
+class TestConnection(protocols.ConnectionInterfaceTest, TestReactorMixin, unittest.TestCase):
     def setUp(self):
         self.setup_test_reactor()
         self.worker = mock.Mock()

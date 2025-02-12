@@ -21,10 +21,10 @@ from buildbot.test.util import validation
 from buildbot.util import deferwaiter
 from buildbot.util import service
 from buildbot.util import tuplematch
+from buildbot.util.twisted import async_to_deferred
 
 
 class FakeMQConnector(service.AsyncMultiService, base.MQBase):
-
     # a fake connector that doesn't actually bridge messages from production to
     # consumption, and thus doesn't do any topic handling or persistence
 
@@ -40,10 +40,10 @@ class FakeMQConnector(service.AsyncMultiService, base.MQBase):
         self.qrefs = []
         self._deferwaiter = deferwaiter.DeferWaiter()
 
-    @defer.inlineCallbacks
-    def stopService(self):
-        yield self._deferwaiter.wait()
-        yield super().stopService()
+    @async_to_deferred
+    async def stopService(self) -> None:
+        await self._deferwaiter.wait()
+        await super().stopService()
 
     def setup(self):
         self.setup_called = True
@@ -52,11 +52,11 @@ class FakeMQConnector(service.AsyncMultiService, base.MQBase):
     def produce(self, routingKey, data):
         self.testcase.assertIsInstance(routingKey, tuple)
 
-# XXX this is incompatible with the new scheme of sending multiple messages,
-# since the message type is no longer encoded by the first element of the
-# routing key
-#        if self.verifyMessages:
-#            validation.verifyMessage(self.testcase, routingKey, data)
+        # XXX this is incompatible with the new scheme of sending multiple messages,
+        # since the message type is no longer encoded by the first element of the
+        # routing key
+        #        if self.verifyMessages:
+        #            validation.verifyMessage(self.testcase, routingKey, data)
 
         if any(not isinstance(k, str) for k in routingKey):
             raise AssertionError(f"{routingKey} is not all str")
@@ -75,8 +75,7 @@ class FakeMQConnector(service.AsyncMultiService, base.MQBase):
             raise AssertionError("no consumer found")
 
     def startConsuming(self, callback, filter, persistent_name=None):
-        if any(not isinstance(k, str) and
-               k is not None for k in filter):
+        if any(not isinstance(k, str) and k is not None for k in filter):
             raise AssertionError(f"{filter} is not a filter")
         qref = FakeQueueRef()
         qref.qrefs = self.qrefs
@@ -104,9 +103,13 @@ class FakeMQConnector(service.AsyncMultiService, base.MQBase):
             self.testcase.assertEqual(sorted(self.productions), sorted(exp))
         self.productions = []
 
+    @async_to_deferred
+    async def wait_consumed(self) -> None:
+        # waits until all messages have been consumed
+        await self._deferwaiter.wait()
+
 
 class FakeQueueRef:
-
     def stopConsuming(self):
         if self in self.qrefs:
             self.qrefs.remove(self)

@@ -12,7 +12,7 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
-
+from __future__ import annotations
 
 import os
 
@@ -23,12 +23,14 @@ from twisted.trial.unittest import SkipTest
 
 from buildbot.process import properties
 from buildbot.test.fake import fakeprotocol
+from buildbot.util.twisted import async_to_deferred
 from buildbot.worker import Worker
 
+RemoteWorker: type | None = None
 try:
     from buildbot_worker.bot import LocalWorker as RemoteWorker
 except ImportError:
-    RemoteWorker = None
+    pass
 
 
 class FakeWorker:
@@ -80,8 +82,8 @@ class FakeWorker:
         pass
 
 
-@defer.inlineCallbacks
-def disconnect_master_side_worker(worker):
+@async_to_deferred
+async def disconnect_master_side_worker(worker) -> None:
     # Force disconnection because the LocalWorker does not disconnect itself. Note that
     # the worker may have already been disconnected by something else (e.g. if it's not
     # responding). We need to call detached() explicitly because the order in which
@@ -89,25 +91,26 @@ def disconnect_master_side_worker(worker):
     if worker.conn is not None:
         worker._detached_sub.unsubscribe()
         conn = worker.conn
-        yield worker.detached()
+        await worker.detached()
         conn.loseConnection()
-    yield worker.waitForCompleteShutdown()
+    await worker.waitForCompleteShutdown()
 
 
 class SeverWorkerConnectionMixin:
-
     _connection_severed = False
     _severed_deferreds = None
 
-    def disconnect_worker(self):
+    def disconnect_worker(self) -> defer.Deferred[None]:
         if not self._connection_severed:
-            return
+            return defer.succeed(None)
 
         if self._severed_deferreds is not None:
             for d in self._severed_deferreds:
                 d.errback(pb.PBConnectionLost('lost connection'))
 
         self._connection_severed = False
+
+        return defer.succeed(None)
 
     def sever_connection(self):
         # stubs the worker connection so that it appears that the TCP connection
@@ -127,44 +130,48 @@ class SeverWorkerConnectionMixin:
 
         def remotePrint(message):
             return register_deferred()
+
         self.worker.conn.remotePrint = remotePrint
 
         def remoteGetWorkerInfo():
             return register_deferred()
+
         self.worker.conn.remoteGetWorkerInfo = remoteGetWorkerInfo
 
         def remoteSetBuilderList(builders):
             return register_deferred()
+
         self.worker.conn.remoteSetBuilderList = remoteSetBuilderList
 
-        def remoteStartCommand(remoteCommand, builderName, commandId,
-                               commandName, args):
+        def remoteStartCommand(remoteCommand, builderName, commandId, commandName, args):
             return register_deferred()
+
         self.worker.conn.remoteStartCommand = remoteStartCommand
 
         def remoteShutdown():
             return register_deferred()
+
         self.worker.conn.remoteShutdown = remoteShutdown
 
         def remoteStartBuild(builderName):
             return register_deferred()
+
         self.worker.conn.remoteStartBuild = remoteStartBuild
 
         def remoteInterruptCommand(builderName, commandId, why):
             return register_deferred()
+
         self.worker.conn.remoteInterruptCommand = remoteInterruptCommand
 
 
 class WorkerController(SeverWorkerConnectionMixin):
-
     """
     A controller for a ``Worker``.
 
     https://glyph.twistedmatrix.com/2015/05/separate-your-fakes-and-your-inspectors.html
     """
 
-    def __init__(self, case, name, build_wait_timeout=600,
-                 worker_class=None, **kwargs):
+    def __init__(self, case, name, build_wait_timeout=600, worker_class=None, **kwargs):
         if worker_class is None:
             worker_class = Worker
 
@@ -173,8 +180,8 @@ class WorkerController(SeverWorkerConnectionMixin):
         self.worker = worker_class(name, self, **kwargs)
         self.remote_worker = None
 
-    @defer.inlineCallbacks
-    def connect_worker(self):
+    @async_to_deferred
+    async def connect_worker(self):
         if self.remote_worker is not None:
             return
         if RemoteWorker is None:
@@ -182,14 +189,15 @@ class WorkerController(SeverWorkerConnectionMixin):
         workdir = FilePath(self.case.mktemp())
         workdir.createDirectory()
         self.remote_worker = RemoteWorker(self.worker.name, workdir.path, False)
-        yield self.remote_worker.setServiceParent(self.worker)
+        self.remote_worker.setServiceParent(self.worker)
 
-    @defer.inlineCallbacks
-    def disconnect_worker(self):
-        yield super().disconnect_worker()
+    @async_to_deferred
+    async def disconnect_worker(self):
+        await super().disconnect_worker()
         if self.remote_worker is None:
             return
 
-        self.remote_worker, worker = None, self.remote_worker
-        disconnect_master_side_worker(self.worker)
-        yield worker.disownServiceParent()
+        worker = self.remote_worker
+        self.remote_worker = None
+        await worker.disownServiceParent()
+        await disconnect_master_side_worker(self.worker)

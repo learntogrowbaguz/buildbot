@@ -14,15 +14,14 @@
 # Copyright Buildbot Team Members
 
 import datetime
+from unittest.mock import Mock
 
 from dateutil.tz import tzutc
-
-from mock import Mock
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
 from buildbot.plugins import util
+from buildbot.process.builder import Builder
 from buildbot.process.properties import Interpolate
 from buildbot.process.results import FAILURE
 from buildbot.process.results import SUCCESS
@@ -50,53 +49,61 @@ class TestException(Exception):
     pass
 
 
-class TestBitbucketServerStatusPush(TestReactorMixin, ConfigErrorsMixin, unittest.TestCase,
-                                    ReporterTestMixin, LoggingMixin):
-
+class TestBitbucketServerStatusPush(
+    TestReactorMixin, ConfigErrorsMixin, unittest.TestCase, ReporterTestMixin, LoggingMixin
+):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.setup_reporter_test()
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
         yield self.master.startService()
 
     @defer.inlineCallbacks
     def setupReporter(self, **kwargs):
         self._http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.master, self,
-            'serv', auth=('username', 'passwd'),
-            debug=None, verify=None)
-        self.sp = BitbucketServerStatusPush("serv", Interpolate("username"),
-                                            Interpolate("passwd"), **kwargs)
+            self.master, self, 'serv', auth=('username', 'passwd'), debug=None, verify=None
+        )
+        self.sp = BitbucketServerStatusPush(
+            "serv", Interpolate("username"), Interpolate("passwd"), **kwargs
+        )
         yield self.sp.setServiceParent(self.master)
-
-    @defer.inlineCallbacks
-    def tearDown(self):
-        yield self.master.stopService()
+        self.addCleanup(self.master.stopService)
 
     @defer.inlineCallbacks
     def _check_start_and_finish_build(self, build):
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/rest/build-status/1.0/commits/d34db33fd43db33f',
-            json={'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'state': 'INPROGRESS', 'key': 'Builder0',
-                  'description': 'Build started.'},
-            code=HTTP_PROCESSED)
+            json={
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'state': 'INPROGRESS',
+                'key': 'Builder0',
+                'description': 'Build started.',
+            },
+            code=HTTP_PROCESSED,
+        )
         self._http.expect(
             'post',
             '/rest/build-status/1.0/commits/d34db33fd43db33f',
-            json={'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'state': 'SUCCESSFUL', 'key': 'Builder0',
-                  'description': 'Build done.'},
-            code=HTTP_PROCESSED)
+            json={
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'state': 'SUCCESSFUL',
+                'key': 'Builder0',
+                'description': 'Build done.',
+            },
+            code=HTTP_PROCESSED,
+        )
         self._http.expect(
             'post',
             '/rest/build-status/1.0/commits/d34db33fd43db33f',
-            json={'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'state': 'FAILED', 'key': 'Builder0',
-                  'description': 'Build done.'})
+            json={
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'state': 'FAILED',
+                'key': 'Builder0',
+                'description': 'Build done.',
+            },
+        )
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
         build['complete'] = True
@@ -114,33 +121,47 @@ class TestBitbucketServerStatusPush(TestReactorMixin, ConfigErrorsMixin, unittes
     def test_setting_options(self):
         generator = BuildStartEndStatusGenerator(
             start_formatter=MessageFormatterRenderable('Build started.'),
-            end_formatter=MessageFormatterRenderable('Build finished.')
+            end_formatter=MessageFormatterRenderable('Build finished.'),
         )
 
         self.setupReporter(statusName='Build', generators=[generator])
         build = yield self.insert_build_finished(SUCCESS)
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/rest/build-status/1.0/commits/d34db33fd43db33f',
-            json={'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'state': 'INPROGRESS', 'key': 'Builder0',
-                  'name': 'Build', 'description': 'Build started.'},
-            code=HTTP_PROCESSED)
+            json={
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'state': 'INPROGRESS',
+                'key': 'Builder0',
+                'name': 'Build',
+                'description': 'Build started.',
+            },
+            code=HTTP_PROCESSED,
+        )
         self._http.expect(
             'post',
             '/rest/build-status/1.0/commits/d34db33fd43db33f',
-            json={'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'state': 'SUCCESSFUL', 'key': 'Builder0',
-                  'name': 'Build', 'description': 'Build finished.'},
-            code=HTTP_PROCESSED)
+            json={
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'state': 'SUCCESSFUL',
+                'key': 'Builder0',
+                'name': 'Build',
+                'description': 'Build finished.',
+            },
+            code=HTTP_PROCESSED,
+        )
         self._http.expect(
             'post',
             '/rest/build-status/1.0/commits/d34db33fd43db33f',
-            json={'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'state': 'FAILED', 'key': 'Builder0',
-                  'name': 'Build', 'description': 'Build finished.'},
-            code=HTTP_PROCESSED)
+            json={
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'state': 'FAILED',
+                'key': 'Builder0',
+                'name': 'Build',
+                'description': 'Build finished.',
+            },
+            code=HTTP_PROCESSED,
+        )
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
         build['complete'] = True
@@ -152,17 +173,21 @@ class TestBitbucketServerStatusPush(TestReactorMixin, ConfigErrorsMixin, unittes
     def test_error(self):
         self.setupReporter()
         build = yield self.insert_build_finished(SUCCESS)
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/rest/build-status/1.0/commits/d34db33fd43db33f',
-            json={'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'state': 'INPROGRESS', 'key': 'Builder0',
-                  'description': 'Build started.'},
+            json={
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'state': 'INPROGRESS',
+                'key': 'Builder0',
+                'description': 'Build started.',
+            },
             code=HTTP_NOT_FOUND,
             content_json={
                 "error_description": "This commit is unknown to us",
-                "error": "invalid_commit"})
+                "error": "invalid_commit",
+            },
+        )
         build['complete'] = False
         self.setUpLogging()
         yield self.sp._got_event(('builds', 20, 'new'), build)
@@ -186,22 +211,31 @@ class TestBitbucketServerStatusPush(TestReactorMixin, ConfigErrorsMixin, unittes
         yield self.sp._got_event(('builds', 20, 'finished'), build)
 
 
-class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, unittest.TestCase,
-                                           ReporterTestMixin, LoggingMixin):
-
+class TestBitbucketServerCoreAPIStatusPush(
+    ConfigErrorsMixin, TestReactorMixin, unittest.TestCase, ReporterTestMixin, LoggingMixin
+):
     @defer.inlineCallbacks
     def setupReporter(self, token=None, **kwargs):
         self.setup_test_reactor()
         self.setup_reporter_test()
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True,
-                                             wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
+
+        def setup_properties(props):
+            props.setProperty("buildername", "Builder0", "Builder")
+            return defer.succeed(None)
+
+        builder = Mock(spec=Builder)
+        builder.master = self.master
+        builder.name = "Builder0"
+        builder.setup_properties = setup_properties
+        self.master.botmaster.getBuilderById = Mock(return_value=builder)
 
         http_headers = {} if token is None else {'Authorization': 'Bearer tokentoken'}
         http_auth = ('username', 'passwd') if token is None else None
 
         self._http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.master, self, 'serv', auth=http_auth, headers=http_headers,
-            debug=None, verify=None)
+            self.master, self, 'serv', auth=http_auth, headers=http_headers, debug=None, verify=None
+        )
 
         auth = (Interpolate("username"), Interpolate("passwd")) if token is None else None
 
@@ -209,53 +243,131 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
         yield self.sp.setServiceParent(self.master)
         yield self.master.startService()
 
+        @defer.inlineCallbacks
+        def cleanup():
+            if self.master.running:
+                yield self.master.stopService()
+
+        self.addCleanup(cleanup)
+
     def setUp(self):
         self.master = None
 
     @defer.inlineCallbacks
-    def tearDown(self):
-        if self.master and self.master.running:
-            yield self.master.stopService()
-
-    @defer.inlineCallbacks
-    def _check_start_and_finish_build(self, build, parentPlan=False):
-        # we make sure proper calls to txrequests have been made
-
-        _name = "Builder_parent #1 \u00BB Builder0 #0" if parentPlan else "Builder0 #0"
+    def _check_start_and_finish_build(self, build, parentPlan=False, epoch=False):
+        _name = "Builder_parent #1 \u00bb Builder0 #0" if parentPlan else "Builder0 #0"
         _parent = "Builder_parent" if parentPlan else "Builder0"
 
         self._http.expect(
             'post',
             '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
-            json={'name': _name, 'description': 'Build started.', 'key': 'Builder0',
-                  'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'ref': 'refs/heads/master', 'buildNumber': '0', 'state': 'INPROGRESS',
-                  'parent': _parent, 'duration': None, 'testResults': None},
-            code=HTTP_PROCESSED)
+            json={
+                'name': _name,
+                'description': 'Build started.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'ref': 'refs/heads/master',
+                'buildNumber': '0',
+                'state': 'INPROGRESS',
+                'parent': _parent,
+                'duration': None,
+                'testResults': None,
+            },
+            code=HTTP_PROCESSED,
+        )
         self._http.expect(
             'post',
             '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
-            json={'name': _name, 'description': 'Build done.', 'key': 'Builder0',
-                  'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'ref': 'refs/heads/master', 'buildNumber': '0', 'state': 'SUCCESSFUL',
-                  'parent': _parent, 'duration': 10000, 'testResults': None},
-            code=HTTP_PROCESSED)
+            json={
+                'name': _name,
+                'description': 'Build done.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'ref': 'refs/heads/master',
+                'buildNumber': '0',
+                'state': 'SUCCESSFUL',
+                'parent': _parent,
+                'duration': 10000,
+                'testResults': None,
+            },
+            code=HTTP_PROCESSED,
+        )
         self._http.expect(
             'post',
             '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
-            json={'name': _name, 'description': 'Build done.', 'key': 'Builder0',
-                  'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'ref': 'refs/heads/master', 'buildNumber': '0', 'state': 'FAILED',
-                  'parent': _parent, 'duration': 10000, 'testResults': None},
-            code=HTTP_PROCESSED)
-        build['started_at'] = datetime.datetime(2019, 4, 1, 23, 38, 33, 154354, tzinfo=tzutc())
+            json={
+                'name': _name,
+                'description': 'Build done.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'ref': 'refs/heads/master',
+                'buildNumber': '0',
+                'state': 'FAILED',
+                'parent': _parent,
+                'duration': 10000,
+                'testResults': None,
+            },
+            code=HTTP_PROCESSED,
+        )
+        if epoch:
+            build['started_at'] = 1554161913
+        else:
+            build['started_at'] = datetime.datetime(2019, 4, 1, 23, 38, 33, 154354, tzinfo=tzutc())
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
-        build["complete_at"] = datetime.datetime(2019, 4, 1, 23, 38, 43, 154354, tzinfo=tzutc())
+        if epoch:
+            build["complete_at"] = 1554161923
+        else:
+            build["complete_at"] = datetime.datetime(2019, 4, 1, 23, 38, 43, 154354, tzinfo=tzutc())
         build['complete'] = True
         yield self.sp._got_event(('builds', 20, 'finished'), build)
         build['results'] = FAILURE
         yield self.sp._got_event(('builds', 20, 'finished'), build)
+
+    @defer.inlineCallbacks
+    def test_buildrequest(self):
+        yield self.setupReporter()
+        buildrequest = yield self.insert_buildrequest_new()
+
+        _name = "Builder0 #(build request)"
+        _parent = "Builder0"
+        self._http.expect(
+            'post',
+            '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
+            json={
+                'name': _name,
+                'description': 'Build pending.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/buildrequests/11',
+                'ref': 'refs/heads/master',
+                'buildNumber': '',
+                'state': 'INPROGRESS',
+                'parent': _parent,
+                'duration': None,
+                'testResults': None,
+            },
+            code=HTTP_PROCESSED,
+        )
+        self._http.expect(
+            'post',
+            '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
+            json={
+                'name': _name,
+                'description': 'Build pending.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/buildrequests/11',
+                'ref': 'refs/heads/master',
+                'buildNumber': '',
+                'state': 'FAILED',
+                'parent': _parent,
+                'duration': None,
+                'testResults': None,
+            },
+            code=HTTP_PROCESSED,
+        )
+
+        yield self.sp._got_event(('buildrequests', 11, 'new'), buildrequest)
+        yield self.sp._got_event(('buildrequests', 11, 'cancel'), buildrequest)
 
     def test_config_no_base_url(self):
         with self.assertRaisesConfigError("Parameter base_url has to be given"):
@@ -263,7 +375,8 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
 
     def test_config_auth_and_token_mutually_exclusive(self):
         with self.assertRaisesConfigError(
-                "Only one authentication method can be given (token or auth)"):
+            "Only one authentication method can be given (token or auth)"
+        ):
             BitbucketServerCoreAPIStatusPush("serv", token="x", auth=("username", "passwd"))
 
     @defer.inlineCallbacks
@@ -271,6 +384,12 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
         yield self.setupReporter()
         build = yield self.insert_build_finished(SUCCESS)
         yield self._check_start_and_finish_build(build)
+
+    @defer.inlineCallbacks
+    def test_basic_epoch(self):
+        yield self.setupReporter()
+        build = yield self.insert_build_finished(SUCCESS)
+        yield self._check_start_and_finish_build(build, epoch=True)
 
     @defer.inlineCallbacks
     def test_with_parent(self):
@@ -303,15 +422,23 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
         self.setupReporter()
         build = yield self.insert_build_finished(SUCCESS)
         self.setUpLogging()
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
-            json={'name': 'Builder0 #0', 'description': 'Build started.', 'key': 'Builder0',
-                  'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'ref': 'refs/heads/master', 'buildNumber': '0', 'state': 'INPROGRESS',
-                  'parent': 'Builder0', 'duration': None, 'testResults': None},
-            code=HTTP_NOT_FOUND)
+            json={
+                'name': 'Builder0 #0',
+                'description': 'Build started.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'ref': 'refs/heads/master',
+                'buildNumber': '0',
+                'state': 'INPROGRESS',
+                'parent': 'Builder0',
+                'duration': None,
+                'testResults': None,
+            },
+            code=HTTP_NOT_FOUND,
+        )
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
         self.assertLogged('404: Unable to send Bitbucket Server status')
@@ -335,11 +462,20 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
         self._http.expect(
             'post',
             '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
-            json={'name': 'Builder0 #0', 'description': 'Build started.', 'key': 'Builder0',
-                  'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'ref': None, 'buildNumber': '0', 'state': 'INPROGRESS',
-                  'parent': 'Builder0', 'duration': None, 'testResults': None},
-            code=HTTP_PROCESSED)
+            json={
+                'name': 'Builder0 #0',
+                'description': 'Build started.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'ref': None,
+                'buildNumber': '0',
+                'state': 'INPROGRESS',
+                'parent': 'Builder0',
+                'duration': None,
+                'testResults': None,
+            },
+            code=HTTP_PROCESSED,
+        )
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
         self.assertLogged("WARNING: Unable to resolve ref for SSID: 234.")
@@ -361,14 +497,14 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
     def test_with_no_repo(self):
         yield self.setupReporter()
 
-        self.reporter_test_repo = None
+        self.reporter_test_repo = ''
         build = yield self.insert_build_finished(SUCCESS)
 
         self.setUpLogging()
         # we don't expect any request
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
-        self.assertLogged("Unable to parse repository info from 'None' for SSID: 234")
+        self.assertLogged("Unable to parse repository info from '' for SSID: 234")
 
     @defer.inlineCallbacks
     def test_with_renderers(self):
@@ -384,10 +520,15 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
         def r_duration(props):
             return props.getProperty("unittests_runtime")
 
-        yield self.setupReporter(statusName=Interpolate("%(prop:plan_name)s"),
-            statusSuffix=Interpolate(" [%(prop:unittests_os)s]"), buildNumber=Interpolate('100'),
-            ref=Interpolate("%(prop:branch)s"), parentName=Interpolate("%(prop:master_plan)s"),
-            testResults=r_testresults, duration=r_duration)
+        yield self.setupReporter(
+            statusName=Interpolate("%(prop:plan_name)s"),
+            statusSuffix=Interpolate(" [%(prop:unittests_os)s]"),
+            buildNumber=Interpolate('100'),
+            ref=Interpolate("%(prop:branch)s"),
+            parentName=Interpolate("%(prop:master_plan)s"),
+            testResults=r_testresults,
+            duration=r_duration,
+        )
 
         self.reporter_test_props['unittests_failed'] = 0
         self.reporter_test_props['unittests_skipped'] = 2
@@ -401,12 +542,20 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
         self._http.expect(
             'post',
             '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
-            json={'name': 'Unittests [win10]', 'description': 'Build done.', 'key': 'Builder0',
-                  'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'ref': "refs/pull/34/merge", 'buildNumber': '100', 'state': 'SUCCESSFUL',
-                  'parent': 'Unittests-master', 'duration': 50000, 'testResults': {'failed': 0,
-                  'skipped': 2, 'successful': 3}},
-            code=HTTP_PROCESSED)
+            json={
+                'name': 'Unittests [win10]',
+                'description': 'Build done.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'ref': "refs/pull/34/merge",
+                'buildNumber': '100',
+                'state': 'SUCCESSFUL',
+                'parent': 'Unittests-master',
+                'duration': 50000,
+                'testResults': {'failed': 0, 'skipped': 2, 'successful': 3},
+            },
+            code=HTTP_PROCESSED,
+        )
         build['complete'] = True
         yield self.sp._got_event(('builds', 20, 'finished'), build)
 
@@ -421,12 +570,20 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
         self._http.expect(
             'post',
             '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
-            json={'name': 'Builder0 #0', 'description': 'Build done.', 'key': 'Builder0',
-                  'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'ref': 'refs/heads/master', 'buildNumber': '0', 'state': 'SUCCESSFUL',
-                  'parent': 'Builder0', 'duration': 10000, 'testResults': {'failed': 0,
-                  'skipped': 2, 'successful': 3}},
-            code=HTTP_PROCESSED)
+            json={
+                'name': 'Builder0 #0',
+                'description': 'Build done.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'ref': 'refs/heads/master',
+                'buildNumber': '0',
+                'state': 'SUCCESSFUL',
+                'parent': 'Builder0',
+                'duration': 10000,
+                'testResults': {'failed': 0, 'skipped': 2, 'successful': 3},
+            },
+            code=HTTP_PROCESSED,
+        )
         build['started_at'] = datetime.datetime(2019, 4, 1, 23, 38, 33, 154354, tzinfo=tzutc())
         build["complete_at"] = datetime.datetime(2019, 4, 1, 23, 38, 43, 154354, tzinfo=tzutc())
         build['complete'] = True
@@ -440,44 +597,54 @@ class TestBitbucketServerCoreAPIStatusPush(ConfigErrorsMixin, TestReactorMixin, 
         self._http.expect(
             'post',
             '/rest/api/1.0/projects/example.org/repos/repo/commits/d34db33fd43db33f/builds',
-            json={'name': 'Builder0 #0', 'description': 'Build started.', 'key': 'Builder0',
-                  'url': 'http://localhost:8080/#builders/79/builds/0',
-                  'ref': "refs/heads/master", 'buildNumber': '0', 'state': 'INPROGRESS',
-                  'parent': 'Builder0', 'duration': None, 'testResults': None},
-            code=HTTP_PROCESSED)
+            json={
+                'name': 'Builder0 #0',
+                'description': 'Build started.',
+                'key': 'Builder0',
+                'url': 'http://localhost:8080/#/builders/79/builds/0',
+                'ref': "refs/heads/master",
+                'buildNumber': '0',
+                'state': 'INPROGRESS',
+                'parent': 'Builder0',
+                'duration': None,
+                'testResults': None,
+            },
+            code=HTTP_PROCESSED,
+        )
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
         self.assertLogged('Sending payload:')
         self.assertLogged('Status "INPROGRESS" sent for example.org/repo d34db33fd43db33f')
 
 
-UNICODE_BODY = "body: \u00E5\u00E4\u00F6 text"
+UNICODE_BODY = "body: \u00e5\u00e4\u00f6 text"
 EXPECTED_API = '/rest/api/1.0/projects/PRO/repos/myrepo/pull-requests/20/comments'
 PR_URL = "http://example.com/projects/PRO/repos/myrepo/pull-requests/20"
 
 
-class TestBitbucketServerPRCommentPush(TestReactorMixin, unittest.TestCase,
-                                       ReporterTestMixin, LoggingMixin):
-
+class TestBitbucketServerPRCommentPush(
+    TestReactorMixin, unittest.TestCase, ReporterTestMixin, LoggingMixin
+):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.setup_reporter_test()
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True,
-                                             wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
         yield self.master.startService()
+        self.addCleanup(self.master.stopService)
 
     @defer.inlineCallbacks
     def setupReporter(self, verbose=True, generator_class=BuildStatusGenerator, **kwargs):
         self._http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.master, self, 'serv', auth=('username', 'passwd'), debug=None,
-            verify=None)
+            self.master, self, 'serv', auth=('username', 'passwd'), debug=None, verify=None
+        )
 
         formatter = Mock(spec=MessageFormatter)
         formatter.format_message_for_build.return_value = {
             "body": UNICODE_BODY,
             "type": "text",
-            "subject": "subject"
+            "subject": "subject",
+            "extra_info": None,
         }
         formatter.want_properties = True
         formatter.want_steps = False
@@ -486,33 +653,29 @@ class TestBitbucketServerPRCommentPush(TestReactorMixin, unittest.TestCase,
 
         generator = generator_class(message_formatter=formatter)
 
-        self.cp = BitbucketServerPRCommentPush("serv", Interpolate("username"),
-                                               Interpolate("passwd"), verbose=verbose,
-                                               generators=[generator], **kwargs)
+        self.cp = BitbucketServerPRCommentPush(
+            "serv",
+            Interpolate("username"),
+            Interpolate("passwd"),
+            verbose=verbose,
+            generators=[generator],
+            **kwargs,
+        )
         yield self.cp.setServiceParent(self.master)
 
     @defer.inlineCallbacks
-    def tearDown(self):
-        yield self.master.stopService()
-
-    @defer.inlineCallbacks
     def setupBuildResults(self, buildResults, set_pr=True):
-        yield super().insertTestData([buildResults], buildResults)
+        yield super().insert_test_data([buildResults], buildResults)
         build = yield self.master.data.get(('builds', 20))
         if set_pr:
-            yield self.master.db.builds.setBuildProperty(
-                20, "pullrequesturl", PR_URL, "test")
+            yield self.master.db.builds.setBuildProperty(20, "pullrequesturl", PR_URL, "test")
         return build
 
     @defer.inlineCallbacks
     def test_reporter_basic(self):
         yield self.setupReporter()
         build = yield self.setupBuildResults(SUCCESS)
-        self._http.expect(
-            "post",
-            EXPECTED_API,
-            json={"text": UNICODE_BODY},
-            code=HTTP_CREATED)
+        self._http.expect("post", EXPECTED_API, json={"text": UNICODE_BODY}, code=HTTP_CREATED)
         build["complete"] = True
         self.setUpLogging()
         yield self.cp._got_event(('builds', 20, 'finished'), build)
@@ -522,11 +685,7 @@ class TestBitbucketServerPRCommentPush(TestReactorMixin, unittest.TestCase,
     def test_reporter_basic_without_logging(self):
         yield self.setupReporter(verbose=False)
         build = yield self.setupBuildResults(SUCCESS)
-        self._http.expect(
-            "post",
-            EXPECTED_API,
-            json={"text": UNICODE_BODY},
-            code=HTTP_CREATED)
+        self._http.expect("post", EXPECTED_API, json={"text": UNICODE_BODY}, code=HTTP_CREATED)
         build["complete"] = True
         self.setUpLogging()
         yield self.cp._got_event(('builds', 20, 'finished'), build)
@@ -545,12 +704,8 @@ class TestBitbucketServerPRCommentPush(TestReactorMixin, unittest.TestCase,
     def test_reporter_with_buildset(self):
         yield self.setupReporter(generator_class=BuildSetStatusGenerator)
         yield self.setupBuildResults(SUCCESS)
-        buildset = yield self.master.data.get(('buildsets', 98))
-        self._http.expect(
-            "post",
-            EXPECTED_API,
-            json={"text": UNICODE_BODY},
-            code=HTTP_CREATED)
+        buildset = yield self.get_inserted_buildset()
+        self._http.expect("post", EXPECTED_API, json={"text": UNICODE_BODY}, code=HTTP_CREATED)
         yield self.cp._got_event(("buildsets", 98, "complete"), buildset)
 
     @defer.inlineCallbacks
@@ -559,15 +714,15 @@ class TestBitbucketServerPRCommentPush(TestReactorMixin, unittest.TestCase,
         build = yield self.setupBuildResults(SUCCESS)
 
         http_error_code = 500
-        error_body = {"errors": [
-            {"message": "A dataXXXbase error has occurred."}]}
+        error_body = {"errors": [{"message": "A dataXXXbase error has occurred."}]}
 
         self._http.expect(
             "post",
             EXPECTED_API,
             json={"text": UNICODE_BODY},
             code=http_error_code,
-            content_json=error_body)
+            content_json=error_body,
+        )
         self.setUpLogging()
         build['complete'] = True
         yield self.cp._got_event(('builds', 20, 'finished'), build)
@@ -580,27 +735,18 @@ class TestBitbucketServerPRCommentPush(TestReactorMixin, unittest.TestCase,
         yield self.setupReporter()
         build = yield self.setupBuildResults(SUCCESS)
         http_error_code = 503
-        self._http.expect(
-            "post",
-            EXPECTED_API,
-            json={"text": UNICODE_BODY},
-            code=http_error_code)
+        self._http.expect("post", EXPECTED_API, json={"text": UNICODE_BODY}, code=http_error_code)
         self.setUpLogging()
         build['complete'] = True
         yield self.cp._got_event(('builds', 20, 'finished'), build)
         self.assertLogged(f"^{http_error_code}: Unable to send a comment: ")
 
     @defer.inlineCallbacks
-    def test_reporter_does_not_log_return_code_on_valid_return_code(
-            self):
+    def test_reporter_does_not_log_return_code_on_valid_return_code(self):
         yield self.setupReporter()
         build = yield self.setupBuildResults(SUCCESS)
         http_code = 201
-        self._http.expect(
-            "post",
-            EXPECTED_API,
-            json={"text": UNICODE_BODY},
-            code=http_code)
+        self._http.expect("post", EXPECTED_API, json={"text": UNICODE_BODY}, code=http_code)
         self.setUpLogging()
         build['complete'] = True
         yield self.cp._got_event(('builds', 20, 'finished'), build)

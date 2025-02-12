@@ -15,22 +15,19 @@
 #
 # Copyright Buildbot Team Members
 
-from setuptools import setup
-
 import buildbot_pkg
+from setuptools import setup
 
 setup(
     name='buildbot-pkg',
     version=buildbot_pkg.getVersion("."),
     description='Buildbot packaging tools',
-    author=u'Pierre Tardy',
-    author_email=u'tardyp@gmail.com',
+    author='Pierre Tardy',
+    author_email='tardyp@gmail.com',
     url='http://buildbot.net/',
     py_modules=['buildbot_pkg'],
     install_requires=[
         "setuptools >= 21.2.1",
     ],
-    classifiers=[
-        'License :: OSI Approved :: GNU General Public License v2 (GPLv2)'
-    ],
+    classifiers=['License :: OSI Approved :: GNU General Public License v2 (GPLv2)'],
 )

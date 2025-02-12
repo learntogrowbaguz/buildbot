@@ -17,7 +17,6 @@
 import copy
 
 from parameterized import parameterized
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
@@ -34,14 +33,12 @@ from buildbot.test.util.config import ConfigErrorsMixin
 from buildbot.test.util.reporter import ReporterTestMixin
 
 
-class TestBuildGenerator(ConfigErrorsMixin, TestReactorMixin,
-                         unittest.TestCase, ReporterTestMixin):
-
+class TestBuildGenerator(ConfigErrorsMixin, TestReactorMixin, unittest.TestCase, ReporterTestMixin):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.setup_reporter_test()
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True,
-                                             wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
 
     @defer.inlineCallbacks
     def insert_build_finished_get_props(self, results, **kwargs):
@@ -49,18 +46,33 @@ class TestBuildGenerator(ConfigErrorsMixin, TestReactorMixin,
         yield utils.getDetailsForBuild(self.master, build, want_properties=True)
         return build
 
-    def create_generator(self, mode=("failing", "passing", "warnings"),
-                         tags=None, builders=None, schedulers=None, branches=None,
-                         subject="Some subject", add_logs=False, add_patch=False):
-        return BuildStatusGeneratorMixin(mode, tags, builders, schedulers, branches, subject,
-                                         add_logs, add_patch)
+    def create_generator(
+        self,
+        mode=("failing", "passing", "warnings"),
+        tags=None,
+        builders=None,
+        schedulers=None,
+        branches=None,
+        subject="Some subject",
+        add_logs=None,
+        add_patch=False,
+    ):
+        return BuildStatusGeneratorMixin(
+            mode, tags, builders, schedulers, branches, subject, add_logs, add_patch
+        )
 
     def test_generate_name(self):
-        g = self.create_generator(tags=['tag1', 'tag2'], builders=['b1', 'b2'],
-                                  schedulers=['s1', 's2'], branches=['b1', 'b2'])
-        self.assertEqual(g.generate_name(),
-                         'BuildStatusGeneratorMixin_tags_tag1+tag2_builders_b1+b2_' +
-                         'schedulers_s1+s2_branches_b1+b2failing_passing_warnings')
+        g = self.create_generator(
+            tags=['tag1', 'tag2'],
+            builders=['b1', 'b2'],
+            schedulers=['s1', 's2'],
+            branches=['b1', 'b2'],
+        )
+        self.assertEqual(
+            g.generate_name(),
+            'BuildStatusGeneratorMixin_tags_tag1+tag2_builders_b1+b2_'
+            + 'schedulers_s1+s2_branches_b1+b2failing_passing_warnings',
+        )
 
     @parameterized.expand([
         ('tags', 'tag'),
@@ -251,19 +263,6 @@ class TestBuildGenerator(ConfigErrorsMixin, TestReactorMixin,
         return self.run_sends_message_for_problems("change", FAILURE, FAILURE, False)
 
     @parameterized.expand([
-        ('bool_true', True, 'step', 'log', True),
-        ('bool_false', False, 'step', 'log', False),
-        ('match_by_log_name', ['log'], 'step', 'log', True),
-        ('no_match_by_log_name', ['not_existing'], 'step', 'log', False),
-        ('match_by_log_step_name', ['step.log'], 'step', 'log', True),
-        ('no_match_by_log_step_name', ['step1.log1'], 'step', 'log', False),
-    ])
-    def test_should_attach_log(self, name, add_logs, log_step_name, log_name, expected_result):
-        g = self.create_generator(add_logs=add_logs)
-        log = {'stepname': log_step_name, 'name': log_name}
-        self.assertEqual(g._should_attach_log(log), expected_result)
-
-    @parameterized.expand([
         ('both_none', None, None, (None, False)),
         ('old_none', None, 'type', ('type', True)),
         ('new_none', 'type', None, ('type', False)),
@@ -297,3 +296,24 @@ class TestBuildGenerator(ConfigErrorsMixin, TestReactorMixin,
     def test_merge_body(self, name, old, new, expected_result):
         g = self.create_generator()
         self.assertEqual(g._merge_body(old, new), expected_result)
+
+    @parameterized.expand([
+        ("both_none", None, None, (None, True)),
+        ("old_none", None, {"k": "v"}, ({"k": "v"}, True)),
+        ("new_none", {"k": "v"}, None, ({"k": "v"}, True)),
+        (
+            "both_same_key",
+            {"k": {"kk1": "vv1"}},
+            {"k": {"kk2": "vv2"}},
+            ({"k": {"kk1": "vv1", "kk2": "vv2"}}, True),
+        ),
+        (
+            "both_same_key_conflict",
+            {"k": {"kk1": "vv1"}},
+            {"k": {"kk1": "vv2"}},
+            ({"k": {"kk1": "vv1"}}, True),
+        ),
+    ])
+    def test_merge_info(self, name, old, new, expected_result):
+        g = self.create_generator()
+        self.assertEqual(g._merge_extra_info(old, new), expected_result)

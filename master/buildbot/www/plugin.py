@@ -13,23 +13,26 @@
 #
 # Copyright Buildbot Team Members
 
-
-import pkg_resources
+import sys
 
 from twisted.web import static
 
 from buildbot.util import bytes2unicode
 
+if sys.version_info[:2] >= (3, 9):
+    # We need importlib.resources.files, which is added in Python 3.9
+    # https://docs.python.org/3/library/importlib.resources.html
+    import importlib.resources as importlib_resources
+else:
+    import importlib_resources  # type: ignore[import-not-found]
+
 
 class Application:
-
-    def __init__(self, modulename, description, ui=True):
+    def __init__(self, package_name, description, ui=True):
         self.description = description
-        self.version = pkg_resources.resource_string(
-            modulename, "VERSION").strip()
-        self.version = bytes2unicode(self.version)
-        self.static_dir = pkg_resources.resource_filename(
-            modulename, "static")
+        self.version = importlib_resources.files(package_name).joinpath("VERSION")
+        self.version = bytes2unicode(self.version.read_bytes())
+        self.static_dir = importlib_resources.files(package_name) / "static"
         self.resource = static.File(self.static_dir)
         self.ui = ui
 
@@ -40,6 +43,8 @@ class Application:
         self.config = config
 
     def __repr__(self):
-        return ("www.plugin.Application(version=%(version)s, "
-                "description=%(description)s, "
-                "static_dir=%(static_dir)s)") % self.__dict__
+        return (
+            "www.plugin.Application(version={version}, "
+            "description={description}, "
+            "static_dir={static_dir})"
+        ).format(**self.__dict__)

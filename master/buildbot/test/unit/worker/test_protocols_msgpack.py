@@ -15,11 +15,9 @@
 
 import os
 import stat
+from unittest import mock
 
 from parameterized import parameterized
-
-import mock
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
@@ -32,10 +30,10 @@ from buildbot.worker.protocols import msgpack
 
 
 class TestListener(TestReactorMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
 
     def test_constructor(self):
         listener = msgpack.Listener(self.master)
@@ -81,20 +79,21 @@ class TestListener(TestReactorMixin, unittest.TestCase):
         self.assertIsInstance(conn, msgpack.Connection)
 
 
-class TestConnectionApi(util_protocols.ConnectionInterfaceTest,
-                        TestReactorMixin, unittest.TestCase):
-
+class TestConnectionApi(
+    util_protocols.ConnectionInterfaceTest, TestReactorMixin, unittest.TestCase
+):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         self.conn = msgpack.Connection(self.master, mock.Mock(), mock.Mock())
 
 
 class TestConnection(TestReactorMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         self.protocol = mock.Mock()
         self.worker = mock.Mock()
         self.worker.workername = 'test_worker'
@@ -129,7 +128,7 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
         self.conn.loseConnection()
 
         self.assertEqual(self.conn.keepalive_timer, None)
-        self.protocol.sendClose.assert_called()
+        self.protocol.transport.abortConnection.assert_called()
 
     def test_do_keepalive(self):
         self.conn._do_keepalive()
@@ -173,8 +172,7 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_remote_print(self):
         yield self.conn.remotePrint(message='test')
-        self.protocol.get_message_result.assert_called_once_with({'op': 'print',
-                                                                  'message': 'test'})
+        self.protocol.get_message_result.assert_called_once_with({'op': 'print', 'message': 'test'})
 
     @defer.inlineCallbacks
     def test_remote_get_worker_info(self):
@@ -187,7 +185,12 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
     def set_up_set_builder_list(self, builders, delete_leftover_dirs=True):
         self.protocol.command_id_to_command_map = {}
 
-        self.protocol.get_message_result.return_value = defer.succeed(None)
+        def get_message_result(*args):
+            d = defer.Deferred()
+            self.d_get_message_result = d
+            return d
+
+        self.protocol.get_message_result.side_effect = get_message_result
         self.conn.info = {'basedir': 'testdir'}
         self.conn.info['delete_leftover_dirs'] = delete_leftover_dirs
         self.conn.path_module = os.path
@@ -196,22 +199,41 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
 
     def check_message_send_response(self, command_name, args, update_msg):
         command_id = remotecommand.RemoteCommand.get_last_generated_command_id()
-        self.protocol.get_message_result.assert_called_once_with({'op': 'start_command',
-                                                                  'command_id': command_id,
-                                                                  'command_name': command_name,
-                                                                  'args': args})
+        self.protocol.get_message_result.assert_called_once_with({
+            'op': 'start_command',
+            'command_id': command_id,
+            'command_name': command_name,
+            'args': args,
+        })
         self.protocol.get_message_result.reset_mock()
+        self.d_get_message_result.callback(None)
 
         remote_command = self.protocol.command_id_to_command_map[command_id]
         remote_command.remote_update_msgpack(update_msg)
         remote_command.remote_complete(None)
 
+    def check_message_set_worker_settings(self):
+        newline_re = r'(\r\n|\r(?=.)|\033\[u|\033\[[0-9]+;[0-9]+[Hf]|\033\[2J|\x08+)'
+        self.protocol.get_message_result.assert_called_once_with({
+            'op': 'set_worker_settings',
+            'args': {
+                'newline_re': newline_re,
+                'max_line_length': 4096,
+                'buffer_timeout': 5,
+                'buffer_size': 64 * 1024,
+            },
+        })
+        self.protocol.get_message_result.reset_mock()
+        self.d_get_message_result.callback(None)
+
     @defer.inlineCallbacks
     def test_remote_set_builder_list_no_rmdir(self):
         d = self.set_up_set_builder_list([('builder1', 'test_dir1'), ('builder2', 'test_dir2')])
+        self.check_message_set_worker_settings()
 
-        self.check_message_send_response('listdir', {'path': 'testdir'},
-                                         [('files', ['dir1', 'dir2', 'dir3']), ('rc', 0)])
+        self.check_message_send_response(
+            'listdir', {'path': 'testdir'}, [('files', ['dir1', 'dir2', 'dir3']), ('rc', 0)]
+        )
 
         path = os.path.join('testdir', 'dir1')
         self.check_message_send_response('stat', {'path': path}, [('stat', (1,)), ('rc', 0)])
@@ -222,8 +244,11 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
         path = os.path.join('testdir', 'dir3')
         self.check_message_send_response('stat', {'path': path}, [('stat', (1,)), ('rc', 0)])
 
-        paths = [os.path.join('testdir', 'info'), os.path.join('testdir', 'test_dir1'),
-                 os.path.join('testdir', 'test_dir2')]
+        paths = [
+            os.path.join('testdir', 'info'),
+            os.path.join('testdir', 'test_dir1'),
+            os.path.join('testdir', 'test_dir2'),
+        ]
         self.check_message_send_response('mkdir', {'paths': paths}, [('rc', 0)])
 
         r = yield d
@@ -233,28 +258,39 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_remote_set_builder_list_do_rmdir(self):
         d = self.set_up_set_builder_list([('builder1', 'test_dir1'), ('builder2', 'test_dir2')])
+        self.check_message_set_worker_settings()
 
-        self.check_message_send_response('listdir', {'path': 'testdir'},
-                                         [('files', ['dir1', 'dir2', 'dir3']), ('rc', 0)])
+        self.check_message_send_response(
+            'listdir', {'path': 'testdir'}, [('files', ['dir1', 'dir2', 'dir3']), ('rc', 0)]
+        )
 
         path = os.path.join('testdir', 'dir1')
-        self.check_message_send_response('stat', {'path': path},
-                                         [('stat', (stat.S_IFDIR,)), ('rc', 0)])
+        self.check_message_send_response(
+            'stat', {'path': path}, [('stat', (stat.S_IFDIR,)), ('rc', 0)]
+        )
 
         path = os.path.join('testdir', 'dir2')
-        self.check_message_send_response('stat', {'path': path},
-                                         [('stat', (stat.S_IFDIR,)), ('rc', 0)])
+        self.check_message_send_response(
+            'stat', {'path': path}, [('stat', (stat.S_IFDIR,)), ('rc', 0)]
+        )
 
         path = os.path.join('testdir', 'dir3')
-        self.check_message_send_response('stat', {'path': path},
-                                         [('stat', (stat.S_IFDIR,)), ('rc', 0)])
+        self.check_message_send_response(
+            'stat', {'path': path}, [('stat', (stat.S_IFDIR,)), ('rc', 0)]
+        )
 
-        paths = [os.path.join('testdir', 'dir1'), os.path.join('testdir', 'dir2'),
-                 os.path.join('testdir', 'dir3')]
+        paths = [
+            os.path.join('testdir', 'dir1'),
+            os.path.join('testdir', 'dir2'),
+            os.path.join('testdir', 'dir3'),
+        ]
         self.check_message_send_response('rmdir', {'paths': paths}, [('rc', 0)])
 
-        paths = [os.path.join('testdir', 'info'), os.path.join('testdir', 'test_dir1'),
-                 os.path.join('testdir', 'test_dir2')]
+        paths = [
+            os.path.join('testdir', 'info'),
+            os.path.join('testdir', 'test_dir1'),
+            os.path.join('testdir', 'test_dir2'),
+        ]
         self.check_message_send_response('mkdir', {'paths': paths}, [('rc', 0)])
 
         r = yield d
@@ -263,14 +299,20 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
 
     @defer.inlineCallbacks
     def test_remote_set_builder_list_no_rmdir_leave_leftover_dirs(self):
-        d = self.set_up_set_builder_list([('builder1', 'test_dir1'), ('builder2', 'test_dir2')],
-                                         delete_leftover_dirs=False)
+        d = self.set_up_set_builder_list(
+            [('builder1', 'test_dir1'), ('builder2', 'test_dir2')], delete_leftover_dirs=False
+        )
+        self.check_message_set_worker_settings()
 
-        self.check_message_send_response('listdir', {'path': 'testdir'},
-                                         [('files', ['dir1', 'dir2', 'dir3']), ('rc', 0)])
+        self.check_message_send_response(
+            'listdir', {'path': 'testdir'}, [('files', ['dir1', 'dir2', 'dir3']), ('rc', 0)]
+        )
 
-        paths = [os.path.join('testdir', 'info'), os.path.join('testdir', 'test_dir1'),
-                 os.path.join('testdir', 'test_dir2')]
+        paths = [
+            os.path.join('testdir', 'info'),
+            os.path.join('testdir', 'test_dir1'),
+            os.path.join('testdir', 'test_dir2'),
+        ]
         self.check_message_send_response('mkdir', {'paths': paths}, [('rc', 0)])
 
         r = yield d
@@ -280,9 +322,11 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_remote_set_builder_list_no_mkdir_from_files(self):
         d = self.set_up_set_builder_list([('builder1', 'test_dir1'), ('builder2', 'test_dir2')])
+        self.check_message_set_worker_settings()
 
-        self.check_message_send_response('listdir', {'path': 'testdir'},
-                                         [('files', ['dir1', 'test_dir2']), ('rc', 0)])
+        self.check_message_send_response(
+            'listdir', {'path': 'testdir'}, [('files', ['dir1', 'test_dir2']), ('rc', 0)]
+        )
 
         path = os.path.join('testdir', 'dir1')
         self.check_message_send_response('stat', {'path': path}, [('stat', (1,)), ('rc', 0)])
@@ -297,9 +341,13 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_remote_set_builder_list_no_mkdir(self):
         d = self.set_up_set_builder_list([('builder1', 'test_dir1'), ('builder2', 'test_dir2')])
+        self.check_message_set_worker_settings()
 
-        self.check_message_send_response('listdir', {'path': 'testdir'},
-                                         [('files', ['test_dir1', 'test_dir2', 'info']), ('rc', 0)])
+        self.check_message_send_response(
+            'listdir',
+            {'path': 'testdir'},
+            [('files', ['test_dir1', 'test_dir2', 'info']), ('rc', 0)],
+        )
 
         r = yield d
         self.assertEqual(r, ['builder1', 'builder2'])
@@ -308,9 +356,11 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_remote_set_builder_list_key_is_missing(self):
         d = self.set_up_set_builder_list([('builder1', 'test_dir1'), ('builder2', 'test_dir2')])
+        self.check_message_set_worker_settings()
 
-        self.check_message_send_response('listdir', {'path': 'testdir'},
-                                         [('no_key', []), ('rc', 0)])
+        self.check_message_send_response(
+            'listdir', {'path': 'testdir'}, [('no_key', []), ('rc', 0)]
+        )
 
         with self.assertRaisesRegex(Exception, "Key 'files' is missing."):
             yield d
@@ -320,6 +370,7 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_remote_set_builder_list_key_rc_not_zero(self):
         d = self.set_up_set_builder_list([('builder1', 'test_dir1'), ('builder2', 'test_dir2')])
+        self.check_message_set_worker_settings()
 
         self.check_message_send_response('listdir', {'path': 'testdir'}, [('rc', 123)])
 
@@ -333,7 +384,7 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
         ('want_stdout', 1, True),
         ('want_stderr', 0, False),
         ('want_stderr', 1, True),
-        (None, None, None)
+        (None, None, None),
     ])
     @defer.inlineCallbacks
     def test_remote_start_command_args_update(self, arg_name, arg_value, expected_value):
@@ -353,11 +404,13 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
             expected_args[arg_name] = expected_value
 
         self.assertEqual(result_command_id_to_command_map, self.protocol.command_id_to_command_map)
-        self.protocol.get_message_result.assert_called_with({'op': 'start_command',
-                                                             'builder_name': 'builder',
-                                                             'command_id': 1,
-                                                             'command_name': 'command',
-                                                             'args': expected_args})
+        self.protocol.get_message_result.assert_called_with({
+            'op': 'start_command',
+            'builder_name': 'builder',
+            'command_id': 1,
+            'command_name': 'command',
+            'args': expected_args,
+        })
 
     @defer.inlineCallbacks
     def test_remote_shutdown(self):
@@ -371,9 +424,12 @@ class TestConnection(TestReactorMixin, unittest.TestCase):
         self.protocol.get_message_result.return_value = defer.succeed(None)
         yield self.conn.remoteInterruptCommand('builder', 1, 'test')
 
-        self.protocol.get_message_result.assert_called_once_with({'op': 'interrupt_command',
-                                                                  'builder_name': 'builder',
-                                                                  'command_id': 1, 'why': 'test'})
+        self.protocol.get_message_result.assert_called_once_with({
+            'op': 'interrupt_command',
+            'builder_name': 'builder',
+            'command_id': 1,
+            'why': 'test',
+        })
 
     def test_perspective_keepalive(self):
         self.conn.perspective_keepalive()

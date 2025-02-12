@@ -20,7 +20,6 @@ import subprocess
 from twisted.internet import defer
 from twisted.internet import error
 from twisted.internet import protocol
-from twisted.python import failure
 from twisted.python import log
 from twisted.python import runtime
 
@@ -48,15 +47,24 @@ class RunProcessPP(protocol.ProcessProtocol):
 
 
 class RunProcess:
-
     TIMEOUT_KILL = 5
     interrupt_signal = "KILL"
 
-    def __init__(self, reactor, command, workdir=None, env=None,
-                 collect_stdout=True, collect_stderr=True, stderr_is_error=False,
-                 io_timeout=300, runtime_timeout=3600, sigterm_timeout=5, initial_stdin=None,
-                 use_pty=False):
-
+    def __init__(
+        self,
+        reactor,
+        command,
+        workdir=None,
+        env=None,
+        collect_stdout=True,
+        collect_stderr=True,
+        stderr_is_error=False,
+        io_timeout=300,
+        runtime_timeout=3600,
+        sigterm_timeout=5,
+        initial_stdin=None,
+        use_pty=False,
+    ):
         self._reactor = reactor
         self.command = command
 
@@ -128,7 +136,7 @@ class RunProcess:
         try:
             self._start_command()
         except Exception as e:
-            self.deferred.errback(failure.Failure(e))
+            self.deferred.errback(e)
         return self.deferred
 
     def _start_command(self):
@@ -143,15 +151,17 @@ class RunProcess:
             environ['PWD'] = os.path.abspath(self.workdir)
 
         argv = unicode2bytes(self.command)
-        self.process = self._reactor.spawnProcess(self.pp, argv[0], argv, environ, self.workdir,
-                                                  usePTY=self.use_pty)
+        self.process = self._reactor.spawnProcess(
+            self.pp, argv[0], argv, environ, self.workdir, usePTY=self.use_pty
+        )
 
         if self.io_timeout:
             self.io_timer = self._reactor.callLater(self.io_timeout, self.io_timed_out)
 
         if self.runtime_timeout:
-            self.runtime_timer = self._reactor.callLater(self.runtime_timeout,
-                                                         self.runtime_timed_out)
+            self.runtime_timer = self._reactor.callLater(
+                self.runtime_timeout, self.runtime_timed_out
+            )
 
     def add_stdout(self, data):
         if self.consumer_stdout is not None:
@@ -233,7 +243,6 @@ class RunProcess:
         return False
 
     def check_process_was_killed(self):
-
         self.sigterm_timer = None
         if not self.is_dead():
             if not self.send_signal(self.interrupt_signal):
@@ -259,15 +268,26 @@ class RunProcess:
         log.msg(f'{self}: killing process using {interrupt_signal}')
 
         if runtime.platformType == "win32":
-            if interrupt_signal is not None and self.process.pid is not None:
-                if interrupt_signal == "TERM":
-                    # TODO: blocks
-                    subprocess.check_call(f"TASKKILL /PID {self.process.pid} /T")
-                    success = True
-                elif interrupt_signal == "KILL":
-                    # TODO: blocks
-                    subprocess.check_call(f"TASKKILL /F /PID {self.process.pid} /T")
-                    success = True
+            pid = self.process.pid
+            if interrupt_signal is not None and pid is not None:
+                try:
+                    if interrupt_signal == "TERM":
+                        # TODO: blocks
+                        subprocess.check_call(f"TASKKILL /PID {pid} /T")
+                        success = True
+                    elif interrupt_signal == "KILL":
+                        # TODO: blocks
+                        subprocess.check_call(f"TASKKILL /F /PID {pid} /T")
+                        success = True
+                except subprocess.CalledProcessError as e:
+                    # taskkill may return 128 or 255 as exit code when the child has already exited.
+                    # We can't handle this race condition in any other way than just interpreting
+                    # the kill action as successful
+                    if e.returncode in (128, 255):
+                        log.msg(f"{self} taskkill didn't find pid {pid} to kill")
+                        success = True
+                    else:
+                        raise
 
         # try signalling the process itself (works on Windows too, sorta)
         if not success:
@@ -293,8 +313,9 @@ class RunProcess:
 
         if self.sigterm_timeout is not None:
             self.send_signal("TERM")
-            self.sigterm_timer = self._reactor.callLater(self.sigterm_timeout,
-                                                         self.check_process_was_killed)
+            self.sigterm_timer = self._reactor.callLater(
+                self.sigterm_timeout, self.check_process_was_killed
+            )
         else:
             if not self.send_signal(self.interrupt_signal):
                 log.msg(f"{self}: failed to kill process")

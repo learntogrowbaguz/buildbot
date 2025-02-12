@@ -14,19 +14,19 @@
 # Copyright Buildbot Team Members
 
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
 
 from buildbot.process import log
 from buildbot.process import logobserver
+from buildbot.test import fakedb
 from buildbot.test.fake import fakemaster
 from buildbot.test.reactor import TestReactorMixin
 
 
 class MyLogObserver(logobserver.LogObserver):
-
     def __init__(self):
         self.obs = []
 
@@ -44,10 +44,26 @@ class MyLogObserver(logobserver.LogObserver):
 
 
 class TestLogObserver(TestReactorMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantData=True)
+        yield self.master.db.insert_test_data([
+            fakedb.Master(id=fakedb.FakeDBConnector.MASTER_ID),
+            fakedb.Worker(id=400, name='linux'),
+            fakedb.Builder(id=100),
+            fakedb.Buildset(id=200),
+            fakedb.BuildRequest(id=300, buildsetid=200, builderid=100),
+            fakedb.Build(
+                id=92,
+                buildrequestid=300,
+                number=7,
+                masterid=fakedb.FakeDBConnector.MASTER_ID,
+                builderid=100,
+                workerid=400,
+            ),
+            fakedb.Step(id=1, buildid=92),
+        ])
 
     @defer.inlineCallbacks
     def test_sequence(self):
@@ -63,18 +79,20 @@ class TestLogObserver(TestReactorMixin, unittest.TestCase):
         yield _log.addHeader('HDR\n')
         yield _log.finish()
 
-        self.assertEqual(lo.obs, [
-            ('out', 'hello\n'),
-            ('err', 'cruel\n'),
-            ('out', 'world\n'),
-            ('out', 'multi\nline\nchunk\n'),
-            ('hdr', 'HDR\n'),
-            ('fin',),
-        ])
+        self.assertEqual(
+            lo.obs,
+            [
+                ('out', 'hello\n'),
+                ('err', 'cruel\n'),
+                ('out', 'world\n'),
+                ('out', 'multi\nline\nchunk\n'),
+                ('hdr', 'HDR\n'),
+                ('fin',),
+            ],
+        )
 
 
 class MyLogLineObserver(logobserver.LogLineObserver):
-
     def __init__(self):
         super().__init__()
         self.obs = []
@@ -93,10 +111,26 @@ class MyLogLineObserver(logobserver.LogLineObserver):
 
 
 class TestLineConsumerLogObesrver(TestReactorMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantData=True)
+        yield self.master.db.insert_test_data([
+            fakedb.Master(id=fakedb.FakeDBConnector.MASTER_ID),
+            fakedb.Worker(id=400, name='linux'),
+            fakedb.Builder(id=100),
+            fakedb.Buildset(id=200),
+            fakedb.BuildRequest(id=300, buildsetid=200, builderid=100),
+            fakedb.Build(
+                id=92,
+                buildrequestid=300,
+                number=7,
+                masterid=fakedb.FakeDBConnector.MASTER_ID,
+                builderid=100,
+                workerid=400,
+            ),
+            fakedb.Step(id=1, buildid=92),
+        ])
 
     @defer.inlineCallbacks
     def do_test_sequence(self, consumer):
@@ -123,18 +157,22 @@ class TestLineConsumerLogObesrver(TestReactorMixin, unittest.TestCase):
                 except GeneratorExit:
                     results.append('finish')
                     raise
+
         yield self.do_test_sequence(consumer)
 
-        self.assertEqual(results, [
-            ('o', 'hello'),
-            ('e', 'cruel'),
-            ('o', 'multi'),
-            ('o', 'line'),
-            ('o', 'chunk'),
-            ('h', 'H1'),
-            ('h', 'H2'),
-            'finish',
-        ])
+        self.assertEqual(
+            results,
+            [
+                ('o', 'hello'),
+                ('e', 'cruel'),
+                ('o', 'multi'),
+                ('o', 'line'),
+                ('o', 'chunk'),
+                ('h', 'H1'),
+                ('h', 'H2'),
+                'finish',
+            ],
+        )
 
     @defer.inlineCallbacks
     def test_sequence_no_finish(self):
@@ -144,24 +182,44 @@ class TestLineConsumerLogObesrver(TestReactorMixin, unittest.TestCase):
             while True:
                 stream, line = yield
                 results.append((stream, line))
+
         yield self.do_test_sequence(consumer)
 
-        self.assertEqual(results, [
-            ('o', 'hello'),
-            ('e', 'cruel'),
-            ('o', 'multi'),
-            ('o', 'line'),
-            ('o', 'chunk'),
-            ('h', 'H1'),
-            ('h', 'H2'),
-        ])
+        self.assertEqual(
+            results,
+            [
+                ('o', 'hello'),
+                ('e', 'cruel'),
+                ('o', 'multi'),
+                ('o', 'line'),
+                ('o', 'chunk'),
+                ('h', 'H1'),
+                ('h', 'H2'),
+            ],
+        )
 
 
 class TestLogLineObserver(TestReactorMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantData=True)
+        yield self.master.db.insert_test_data([
+            fakedb.Master(id=fakedb.FakeDBConnector.MASTER_ID),
+            fakedb.Worker(id=400, name='linux'),
+            fakedb.Builder(id=100),
+            fakedb.Buildset(id=200),
+            fakedb.BuildRequest(id=300, buildsetid=200, builderid=100),
+            fakedb.Build(
+                id=92,
+                buildrequestid=300,
+                number=7,
+                masterid=fakedb.FakeDBConnector.MASTER_ID,
+                builderid=100,
+                workerid=400,
+            ),
+            fakedb.Step(id=1, buildid=92),
+        ])
 
     @defer.inlineCallbacks
     def test_sequence(self):
@@ -176,16 +234,19 @@ class TestLogLineObserver(TestReactorMixin, unittest.TestCase):
         yield _log.addHeader('H1\nH2\n')
         yield _log.finish()
 
-        self.assertEqual(lo.obs, [
-            ('out', 'hello'),
-            ('err', 'cruel'),
-            ('out', 'multi'),
-            ('out', 'line'),
-            ('out', 'chunk'),
-            ('hdr', 'H1'),
-            ('hdr', 'H2'),
-            ('fin',),
-        ])
+        self.assertEqual(
+            lo.obs,
+            [
+                ('out', 'hello'),
+                ('err', 'cruel'),
+                ('out', 'multi'),
+                ('out', 'line'),
+                ('out', 'chunk'),
+                ('hdr', 'H1'),
+                ('hdr', 'H2'),
+                ('fin',),
+            ],
+        )
 
     def test_old_setMaxLineLength(self):
         # this method is gone, but used to be documented, so it's still
@@ -195,10 +256,26 @@ class TestLogLineObserver(TestReactorMixin, unittest.TestCase):
 
 
 class TestOutputProgressObserver(TestReactorMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantData=True)
+        yield self.master.db.insert_test_data([
+            fakedb.Master(id=fakedb.FakeDBConnector.MASTER_ID),
+            fakedb.Worker(id=400, name='linux'),
+            fakedb.Builder(id=100),
+            fakedb.Buildset(id=200),
+            fakedb.BuildRequest(id=300, buildsetid=200, builderid=100),
+            fakedb.Build(
+                id=92,
+                buildrequestid=300,
+                number=7,
+                masterid=fakedb.FakeDBConnector.MASTER_ID,
+                builderid=100,
+                workerid=400,
+            ),
+            fakedb.Step(id=1, buildid=92),
+        ])
 
     @defer.inlineCallbacks
     def test_sequence(self):
@@ -215,10 +292,26 @@ class TestOutputProgressObserver(TestReactorMixin, unittest.TestCase):
 
 
 class TestBufferObserver(TestReactorMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantData=True)
+        yield self.master.db.insert_test_data([
+            fakedb.Master(id=fakedb.FakeDBConnector.MASTER_ID),
+            fakedb.Worker(id=400, name='linux'),
+            fakedb.Builder(id=100),
+            fakedb.Buildset(id=200),
+            fakedb.BuildRequest(id=300, buildsetid=200, builderid=100),
+            fakedb.Build(
+                id=92,
+                buildrequestid=300,
+                number=7,
+                masterid=fakedb.FakeDBConnector.MASTER_ID,
+                builderid=100,
+                workerid=400,
+            ),
+            fakedb.Step(id=1, buildid=92),
+        ])
 
     @defer.inlineCallbacks
     def do_test_sequence(self, lo):

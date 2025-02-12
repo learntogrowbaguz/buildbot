@@ -19,12 +19,14 @@ linux dirwatcher API (if available) to look for new files. The
 relative to the top of the maildir (so it will look like "new/blahblah").
 """
 
+from __future__ import annotations
 
 import os
 
 from twisted.application import internet
 from twisted.internet import defer
 from twisted.internet import reactor
+
 # We have to put it here, since we use it to provide feedback
 from twisted.python import log
 from twisted.python import runtime
@@ -33,7 +35,7 @@ from buildbot.util import service
 
 dnotify = None
 try:
-    import dnotify
+    import dnotify  # type: ignore[no-redef]
 except ImportError:
     log.msg("unable to import dnotify, so Maildir will use polling instead")
 
@@ -43,8 +45,8 @@ class NoSuchMaildir(Exception):
 
 
 class MaildirService(service.BuildbotService):
-    pollinterval = 10  # only used if we don't have DNotify
-    name = 'MaildirService'
+    pollInterval = 10  # only used if we don't have DNotify
+    name: str | None = 'MaildirService'  # type: ignore
 
     def __init__(self, basedir=None):
         super().__init__()
@@ -71,17 +73,17 @@ class MaildirService(service.BuildbotService):
             if dnotify:
                 # we must hold an fd open on the directory, so we can get
                 # notified when it changes.
-                self.dnotify = dnotify.DNotify(self.newdir,
-                                               self.dnotify_callback,
-                                               [dnotify.DNotify.DN_CREATE])
-        except (IOError, OverflowError):
+                self.dnotify = dnotify.DNotify(
+                    self.newdir, self.dnotify_callback, [dnotify.DNotify.DN_CREATE]
+                )
+        except (OSError, OverflowError):
             # IOError is probably linux<2.4.19, which doesn't support
             # dnotify. OverflowError will occur on some 64-bit machines
             # because of a python bug
             log.msg("DNotify failed, falling back to polling")
         if not self.dnotify:
-            self.timerService = internet.TimerService(
-                self.pollinterval, self.poll)
+            self.timerService = internet.TimerService(self.pollInterval, self.poll)
+            self.timerService.clock = self.master.reactor
             yield self.timerService.setServiceParent(self)
         self.poll()
         yield super().startService()
@@ -131,21 +133,20 @@ class MaildirService(service.BuildbotService):
             log.err(None, f"while polling maildir '{self.basedir}':")
 
     def moveToCurDir(self, filename):
+        f = None
         if runtime.platformType == "posix":
             # open the file before moving it, because I'm afraid that once
             # it's in cur/, someone might delete it at any moment
             path = os.path.join(self.newdir, filename)
-            f = open(path, "r", encoding='utf-8')
-            os.rename(os.path.join(self.newdir, filename),
-                      os.path.join(self.curdir, filename))
+            f = open(path, encoding='utf-8')
+            os.rename(os.path.join(self.newdir, filename), os.path.join(self.curdir, filename))
         elif runtime.platformType == "win32":
             # do this backwards under windows, because you can't move a file
             # that somebody is holding open. This was causing a Permission
             # Denied error on bear's win32-twisted1.3 worker.
-            os.rename(os.path.join(self.newdir, filename),
-                      os.path.join(self.curdir, filename))
+            os.rename(os.path.join(self.newdir, filename), os.path.join(self.curdir, filename))
             path = os.path.join(self.curdir, filename)
-            f = open(path, "r", encoding='utf-8')  # noqa pylint: disable=consider-using-with
+            f = open(path, encoding='utf-8')
 
         return f
 

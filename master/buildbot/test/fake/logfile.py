@@ -17,10 +17,10 @@ from twisted.internet import defer
 
 from buildbot import util
 from buildbot.util import lineboundaries
+from buildbot.util.twisted import async_to_deferred
 
 
 class FakeLogFile:
-
     def __init__(self, name):
         self.name = name
         self.header = ''
@@ -30,7 +30,7 @@ class FakeLogFile:
         self.finished = False
         self._finish_waiters = []
         self._had_errors = False
-        self.subPoint = util.subscription.SubscriptionPoint(f"{repr(name)} log")
+        self.subPoint = util.subscription.SubscriptionPoint(f"{name!r} log")
 
     def getName(self):
         return self.name
@@ -118,8 +118,8 @@ class FakeLogFile:
     def had_errors(self):
         return self._had_errors
 
-    @defer.inlineCallbacks
-    def finish(self):
+    @async_to_deferred
+    async def finish(self) -> None:
         assert not self.finished
 
         self.flushFakeLogfile()
@@ -128,7 +128,7 @@ class FakeLogFile:
         # notify subscribers *after* finishing the log
         self.subPoint.deliver(None, None)
 
-        yield self.subPoint.waitForDeliveriesToFinish()
+        await self.subPoint.waitForDeliveriesToFinish()
         self._had_errors = len(self.subPoint.pop_exceptions()) > 0
 
         # notify those waiting for finish

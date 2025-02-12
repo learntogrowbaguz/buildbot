@@ -13,24 +13,36 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
 
 import inspect
-import sqlite3
 import time
 import traceback
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-
 from twisted.internet import defer
 from twisted.internet import threads
 from twisted.python import log
-from twisted.python import threadpool
 
+from buildbot import util
 from buildbot.db.buildrequests import AlreadyClaimedError
 from buildbot.db.buildsets import AlreadyCompleteError
 from buildbot.db.changesources import ChangeSourceAlreadyClaimedError
+from buildbot.db.logs import LogSlugExistsError
 from buildbot.db.schedulers import SchedulerAlreadyClaimedError
 from buildbot.process import metrics
+from buildbot.util.sautils import get_sqlite_version
+
+if TYPE_CHECKING:
+    from typing import Callable
+    from typing import TypeVar
+
+    from typing_extensions import Concatenate
+    from typing_extensions import ParamSpec
+
+    _T = TypeVar('_T')
+    _P = ParamSpec('_P')
 
 # set this to True for *very* verbose query debugging output; this can
 # be monkey-patched from master.cfg, too:
@@ -43,6 +55,7 @@ _debug_id = 1
 def timed_do_fn(f):
     """Decorate a do function to log before, after, and elapsed time,
     with the name of the calling function.  This is not speedy!"""
+
     def wrap(callable, *args, **kwargs):
         global _debug_id
 
@@ -55,7 +68,8 @@ def timed_do_fn(f):
         locals = frame.f_locals
 
         # invent a unique ID for the description
-        id, _debug_id = _debug_id, _debug_id + 1
+        id = _debug_id
+        _debug_id = _debug_id + 1
 
         descr = f"{name}-{id:08x}"
 
@@ -64,7 +78,7 @@ def timed_do_fn(f):
         for name in locals:
             if name in ('self', 'thd'):
                 continue
-            log.msg(f"{descr} - {name} = {repr(locals[name])}")
+            log.msg(f"{descr} - {name} = {locals[name]!r}")
 
         # wrap the callable to log the begin and end of the actual thread
         # function
@@ -74,6 +88,7 @@ def timed_do_fn(f):
                 return callable(*args, **kwargs)
             finally:
                 log.msg(f"{descr} - thd end")
+
         d = f(callable_wrap, *args, **kwargs)
 
         @d.addBoth
@@ -82,14 +97,15 @@ def timed_do_fn(f):
             elapsed = (end_time - start_time) * 1000
             log.msg(f"{descr} - after ({elapsed:0.2f} ms elapsed)")
             return x
+
         return d
+
     wrap.__name__ = f.__name__
     wrap.__doc__ = f.__doc__
     return wrap
 
 
 class DBThreadPool:
-
     running = False
 
     def __init__(self, engine, reactor, verbose=False):
@@ -97,8 +113,10 @@ class DBThreadPool:
         # messages about versions and other warnings
         log_msg = log.msg
         if verbose:
+
             def _log_msg(m):
                 print(m)
+
             log_msg = _log_msg
 
         self.reactor = reactor
@@ -112,23 +130,23 @@ class DBThreadPool:
         if hasattr(engine, 'optimal_thread_pool_size'):
             pool_size = engine.optimal_thread_pool_size
 
-        self._pool = threadpool.ThreadPool(minthreads=1,
-                                           maxthreads=pool_size,
-                                           name='DBThreadPool')
+        self._pool = util.twisted.ThreadPool(
+            minthreads=1, maxthreads=pool_size, name='DBThreadPool'
+        )
 
         self.engine = engine
         if engine.dialect.name == 'sqlite':
-            vers = self.get_sqlite_version()
+            vers = get_sqlite_version()
             if vers < (3, 7):
                 log_msg(f"Using SQLite Version {vers}")
-                log_msg("NOTE: this old version of SQLite does not support "
-                        "WAL journal mode; a busy master may encounter "
-                        "'Database is locked' errors.  Consider upgrading.")
+                log_msg(
+                    "NOTE: this old version of SQLite does not support "
+                    "WAL journal mode; a busy master may encounter "
+                    "'Database is locked' errors.  Consider upgrading."
+                )
                 if vers < (3, 6, 19):
-                    log_msg("NOTE: this old version of SQLite is not "
-                            "supported.")
+                    log_msg("NOTE: this old version of SQLite is not supported.")
                     raise RuntimeError("unsupported SQLite version")
-        self._start_evt = self.reactor.callWhenRunning(self._start)
 
         # patch the do methods to do verbose logging if necessary
         if debug:
@@ -140,48 +158,31 @@ class DBThreadPool:
     def get_sqlalchemy_result_type(self):
         try:
             from sqlalchemy.engine import ResultProxy  # sqlalchemy 1.x - 1.3
+
             return ResultProxy
         except ImportError:
             pass
 
         try:
             from sqlalchemy.engine import Result  # sqlalchemy 1.4 and newer
+
             return Result
         except ImportError:
             pass
 
         raise ImportError("Could not import SQLAlchemy result type")
 
-    def _start(self):
-        self._start_evt = None
+    def start(self):
         if not self.running:
             self._pool.start()
-            self._stop_evt = self.reactor.addSystemEventTrigger(
-                'during', 'shutdown', self._stop_nowait)
             self.running = True
 
-    def _stop_nowait(self):
-        self._stop_evt = None
-        threads.deferToThreadPool(self.reactor, self._pool, self.engine.dispose)
-        self._pool.stop()
-        self.running = False
-
     @defer.inlineCallbacks
-    def _stop(self):
-        self._stop_evt = None
-        yield threads.deferToThreadPool(self.reactor, self._pool, self.engine.dispose)
-        self._pool.stop()
-        self.running = False
-
-    @defer.inlineCallbacks
-    def shutdown(self):
-        """Manually stop the pool.  This is only necessary from tests, as the
-        pool will stop itself when the reactor stops under normal
-        circumstances."""
-        if not self._stop_evt:
-            return  # pool is already stopped
-        self.reactor.removeSystemEventTrigger(self._stop_evt)
-        yield self._stop()
+    def stop(self):
+        if self.running:
+            yield threads.deferToThreadPool(self.reactor, self._pool, self.engine.dispose)
+            self._pool.stop()
+            self.running = False
 
     # Try about 170 times over the space of a day, with the last few tries
     # being about an hour apart.  This is designed to span a reasonable amount
@@ -191,7 +192,13 @@ class DBThreadPool:
     BACKOFF_MULT = 1.05
     MAX_OPERATIONALERROR_TIME = 3600 * 24  # one day
 
-    def __thd(self, with_engine, callable, args, kwargs):
+    def __thd(
+        self,
+        with_engine: bool,
+        callable: Callable[Concatenate[sa.engine.Engine | sa.engine.Connection, _P], _T],
+        args: _P.args,
+        kwargs: _P.kwargs,
+    ) -> _T:
         # try to call callable(arg, *args, **kwargs) repeatedly until no
         # OperationalErrors occur, where arg is either the engine (with_engine)
         # or a connection (not with_engine)
@@ -205,20 +212,23 @@ class DBThreadPool:
             try:
                 try:
                     rv = callable(arg, *args, **kwargs)
-                    assert not isinstance(rv, self.forbidded_callable_return_type), \
+                    assert not isinstance(rv, self.forbidded_callable_return_type), (
                         "do not return ResultProxy objects!"
+                    )
                 except sa.exc.OperationalError as e:
                     if not self.engine.should_retry(e):
                         log.err(e, 'Got fatal OperationalError on DB')
                         raise
                     elapsed = time.time() - start
                     if elapsed > self.MAX_OPERATIONALERROR_TIME:
-                        log.err(e, f'Raising due to {self.MAX_OPERATIONALERROR_TIME} '
-                                'seconds delay on DB query retries')
+                        log.err(
+                            e,
+                            f'Raising due to {self.MAX_OPERATIONALERROR_TIME} '
+                            'seconds delay on DB query retries',
+                        )
                         raise
 
-                    metrics.MetricCountEvent.log(
-                        "DBThreadPool.retry-on-OperationalError")
+                    metrics.MetricCountEvent.log("DBThreadPool.retry-on-OperationalError")
                     # sleep (remember, we're in a thread..)
                     time.sleep(backoff)
                     backoff *= self.BACKOFF_MULT
@@ -228,9 +238,16 @@ class DBThreadPool:
                 except Exception as e:
                     # AlreadyClaimedError are normal especially in a multimaster
                     # configuration
-                    if not isinstance(e,
-                        (AlreadyClaimedError, ChangeSourceAlreadyClaimedError,
-                         SchedulerAlreadyClaimedError, AlreadyCompleteError)):
+                    if not isinstance(
+                        e,
+                        (
+                            AlreadyClaimedError,
+                            ChangeSourceAlreadyClaimedError,
+                            SchedulerAlreadyClaimedError,
+                            AlreadyCompleteError,
+                            LogSlugExistsError,
+                        ),
+                    ):
                         log.err(e, 'Got fatal Exception on DB')
                     raise
             finally:
@@ -239,19 +256,53 @@ class DBThreadPool:
             break
         return rv
 
-    @defer.inlineCallbacks
-    def do(self, callable, *args, **kwargs):
-        ret = yield threads.deferToThreadPool(self.reactor, self._pool,
-                                              self.__thd, False, callable,
-                                              args, kwargs)
-        return ret
+    def do_with_transaction(
+        self,
+        callable: Callable[Concatenate[sa.engine.Connection, _P], _T],
+        *args: _P.args,
+        **kwargs: _P.kwargs,
+    ) -> defer.Deferred[_T]:
+        """Same as `do`, but will wrap callable with `with conn.begin():`"""
 
-    @defer.inlineCallbacks
-    def do_with_engine(self, callable, *args, **kwargs):
-        ret = yield threads.deferToThreadPool(self.reactor, self._pool,
-                                              self.__thd, True, callable,
-                                              args, kwargs)
-        return ret
+        def _transaction(
+            conn: sa.engine.Connection,
+            callable: Callable[Concatenate[sa.engine.Connection, _P], _T],
+            *args: _P.args,
+            **kwargs: _P.kwargs,
+        ) -> _T:
+            with conn.begin():
+                return callable(conn, *args, **kwargs)
 
-    def get_sqlite_version(self):
-        return sqlite3.sqlite_version_info
+        return self.do(_transaction, callable, *args, **kwargs)
+
+    def do(
+        self,
+        callable: Callable[Concatenate[sa.engine.Connection, _P], _T],
+        *args: _P.args,
+        **kwargs: _P.kwargs,
+    ) -> defer.Deferred[_T]:
+        return threads.deferToThreadPool(
+            self.reactor,
+            self._pool,
+            self.__thd,  # type: ignore[arg-type]
+            False,
+            callable,
+            args,
+            kwargs,
+        )
+
+    def do_with_engine(
+        self,
+        callable: Callable[Concatenate[sa.engine.Engine, _P], _T],
+        *args: _P.args,
+        **kwargs: _P.kwargs,
+    ) -> defer.Deferred[_T]:
+        return threads.deferToThreadPool(
+            self.reactor,
+            self._pool,
+            self.__thd,  # type: ignore[arg-type]
+            True,
+            callable,
+            args,
+            kwargs,
+        )

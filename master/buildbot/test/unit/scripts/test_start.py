@@ -16,13 +16,10 @@
 import os
 import sys
 import time
+from unittest import mock
 
-import mock
-
-import twisted
 from twisted.internet import defer
 from twisted.internet.utils import getProcessOutputAndValue
-from twisted.python import versions
 from twisted.trial import unittest
 
 from buildbot.scripts import start
@@ -58,15 +55,15 @@ app.setServiceParent(application)
 
 
 class TestStart(misc.StdoutAssertionsMixin, dirs.DirsMixin, unittest.TestCase):
-
     def setUp(self):
+        # On slower machines with high CPU oversubscription this test may take longer to run than
+        # the default timeout.
+        self.timeout = 20
+
         self.setUpDirs('basedir')
-        with open(os.path.join('basedir', 'buildbot.tac'), 'wt', encoding='utf-8') as f:
+        with open(os.path.join('basedir', 'buildbot.tac'), "w", encoding='utf-8') as f:
             f.write(fake_master_tac)
         self.setUpStdoutAssertions()
-
-    def tearDown(self):
-        self.tearDownDirs()
 
     # tests
 
@@ -78,27 +75,40 @@ class TestStart(misc.StdoutAssertionsMixin, dirs.DirsMixin, unittest.TestCase):
         args = [
             '-c',
             'from buildbot.scripts.start import start; import sys; '
-            f'sys.exit(start({repr(mkconfig(**config))}))',
+            f'sys.exit(start({mkconfig(**config)!r}))',
         ]
         env = os.environ.copy()
         env['PYTHONPATH'] = os.pathsep.join(sys.path)
         return getProcessOutputAndValue(sys.executable, args=args, env=env)
 
+    def assert_stderr_ok(self, err):
+        lines = err.split(b'\n')
+        good_warning_parts = [b'32-bit Python on a 64-bit', b'cryptography.hazmat.bindings']
+        for line in lines:
+            is_line_good = False
+            if line == b'':
+                is_line_good = True
+            else:
+                for part in good_warning_parts:
+                    if part in line:
+                        is_line_good = True
+                        break
+            if not is_line_good:
+                self.assertEqual(err, b'')  # not valid warning
+
     @defer.inlineCallbacks
     def test_start_no_daemon(self):
         (_, err, rc) = yield self.runStart(nodaemon=True)
-
-        # on python 3.5, cryptography loudly complains to upgrade
-        if sys.version_info[:2] != (3, 5):
-            self.assertEqual((err, rc), (b'', 0))
+        self.assert_stderr_ok(err)
+        self.assertEqual(rc, 0)
 
     @defer.inlineCallbacks
     def test_start_quiet(self):
         res = yield self.runStart(quiet=True)
 
-        # on python 3.5, cryptography loudly complains to upgrade
-        if sys.version_info[:2] != (3, 5):
-            self.assertEqual(res, (b'', b'', 0))
+        self.assertEqual(res[0], b'')
+        self.assert_stderr_ok(res[1])
+        self.assertEqual(res[2], 0)
 
     @skipUnlessPlatformIs('posix')
     @defer.inlineCallbacks
@@ -130,9 +140,6 @@ class TestStart(misc.StdoutAssertionsMixin, dirs.DirsMixin, unittest.TestCase):
             pidfile = os.path.join('basedir', 'twistd.pid')
             while os.path.exists(pidfile):
                 time.sleep(0.01)
-
-    if twisted.version <= versions.Version('twisted', 9, 0, 0):
-        test_start.skip = test_start_quiet.skip = "Skipping due to suprious PotentialZombieWarning."
 
     # the remainder of this script does obscene things:
     #  - forks

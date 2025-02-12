@@ -25,7 +25,6 @@ class TestException(Exception):
 
 
 class subscriptions(unittest.TestCase):
-
     def setUp(self):
         self.subpt = subscription.SubscriptionPoint('test_sub')
 
@@ -45,7 +44,7 @@ class subscriptions(unittest.TestCase):
 
         # deliver
         self.subpt.deliver(1, 2, a=3, b=4)
-        self.assertEqual(state, [((1, 2), dict(a=3, b=4))])
+        self.assertEqual(state, [((1, 2), {"a": 3, "b": 4})])
         state.pop()
 
         # unsubscribe
@@ -71,7 +70,6 @@ class subscriptions(unittest.TestCase):
         self.assertEqual(1, len(self.flushLoggedErrors(RuntimeError)))
 
     def test_deferred_exception(self):
-
         d = defer.Deferred()
 
         @defer.inlineCallbacks
@@ -111,7 +109,6 @@ class subscriptions(unittest.TestCase):
         self.assertEqual(2, len(self.flushLoggedErrors(TestException)))
 
     def test_multiple_exceptions(self):
-
         d = defer.Deferred()
 
         @defer.inlineCallbacks
@@ -142,6 +139,7 @@ class subscriptions(unittest.TestCase):
             def cb(*args):
                 state.append(args)
                 return d
+
             return cb
 
         d1 = defer.Deferred()

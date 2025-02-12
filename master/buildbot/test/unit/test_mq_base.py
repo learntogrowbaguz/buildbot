@@ -14,7 +14,7 @@
 # Copyright Buildbot Team Members
 
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.python import failure
@@ -24,7 +24,6 @@ from buildbot.mq import base
 
 
 class QueueRef(unittest.TestCase):
-
     def test_success(self):
         cb = mock.Mock(name='cb')
         qref = base.QueueRef(cb)

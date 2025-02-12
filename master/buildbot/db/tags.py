@@ -15,17 +15,15 @@
 
 
 from buildbot.db import base
+from buildbot.util.sautils import hash_columns
 
 
 class TagsConnectorComponent(base.DBConnectorComponent):
-
     def findTagId(self, name):
         tbl = self.db.model.tags
-        name_hash = self.hashColumns(name)
+        name_hash = hash_columns(name)
         return self.findSomethingId(
             tbl=tbl,
             whereclause=(tbl.c.name_hash == name_hash),
-            insert_values=dict(
-                name=name,
-                name_hash=name_hash,
-            ))
+            insert_values={"name": name, "name_hash": name_hash},
+        )

@@ -15,7 +15,6 @@
 
 
 from twisted.internet import defer
-from twisted.python import failure
 from twisted.python import log
 
 from buildbot.util import deferwaiter
@@ -38,8 +37,8 @@ class MQBase(service.AsyncService):
     def waitUntilEvent(self, filter, check_callback):
         d = defer.Deferred()
         buildCompleteConsumer = yield self.startConsuming(
-            lambda key, value: d.callback((key, value)),
-            filter)
+            lambda key, value: d.callback((key, value)), filter
+        )
         check = yield check_callback()
         # we only wait if the check callback return true
         if not check:
@@ -54,7 +53,6 @@ class MQBase(service.AsyncService):
 
 
 class QueueRef:
-
     __slots__ = ['callback']
 
     def __init__(self, callback):
@@ -67,11 +65,11 @@ class QueueRef:
 
         try:
             x = self.callback(routing_key, data)
-        except Exception:
-            log.err(failure.Failure(), f'while invoking {repr(self.callback)}')
+        except Exception as e:
+            log.err(e, f'while invoking {self.callback!r}')
             return None
         if isinstance(x, defer.Deferred):
-            x.addErrback(log.err, f'while invoking {repr(self.callback)}')
+            x.addErrback(log.err, f'while invoking {self.callback!r}')
         return x
 
     def stopConsuming(self):

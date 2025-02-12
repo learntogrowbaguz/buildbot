@@ -13,15 +13,10 @@
 #
 # Copyright Buildbot Team Members
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 import errno
 import os
 import signal
 import time
-
-import mock
 
 from twisted.trial import unittest
 
@@ -29,14 +24,17 @@ from buildbot_worker.scripts import stop
 from buildbot_worker.test.util import compat
 from buildbot_worker.test.util import misc
 
+try:
+    from unittest import mock
+except ImportError:
+    from unittest import mock
 
-class TestStopWorker(misc.FileIOMixin,
-                     misc.StdoutAssertionsMixin,
-                     unittest.TestCase):
 
+class TestStopWorker(misc.FileIOMixin, misc.StdoutAssertionsMixin, unittest.TestCase):
     """
     Test buildbot_worker.scripts.stop.stopWorker()
     """
+
     PID = 9876
 
     def setUp(self):
@@ -83,10 +81,9 @@ class TestStopWorker(misc.FileIOMixin,
         # and print correct message to stdout
         exit_code = stop.stopWorker(None, False)
         self.assertEqual(exit_code, 0)
-        mocked_kill.assert_has_calls([mock.call(self.PID, signal.SIGTERM),
-                                      mock.call(self.PID, 0)])
+        mocked_kill.assert_has_calls([mock.call(self.PID, signal.SIGTERM), mock.call(self.PID, 0)])
 
-        self.assertStdoutEqual("worker process {0} is dead\n".format(self.PID))
+        self.assertStdoutEqual(f"worker process {self.PID} is dead\n")
 
     @compat.skipUnlessPlatformIs("posix")
     def test_stop_timeout(self):
@@ -108,19 +105,16 @@ class TestStopWorker(misc.FileIOMixin,
         # and print correct message to stdout
         exit_code = stop.stopWorker(None, False)
         self.assertEqual(exit_code, 1)
-        mocked_kill.assert_has_calls([mock.call(self.PID, signal.SIGTERM),
-                                      mock.call(self.PID, 0)])
+        mocked_kill.assert_has_calls([mock.call(self.PID, signal.SIGTERM), mock.call(self.PID, 0)])
 
         self.assertStdoutEqual("never saw process go away\n")
 
 
-class TestStop(misc.IsWorkerDirMixin,
-               misc.StdoutAssertionsMixin,
-               unittest.TestCase):
-
+class TestStop(misc.IsWorkerDirMixin, misc.StdoutAssertionsMixin, unittest.TestCase):
     """
     Test buildbot_worker.scripts.stop.stop()
     """
+
     config = {"basedir": "dummy", "quiet": False}
 
     def test_bad_basedir(self):
@@ -169,9 +163,9 @@ class TestStop(misc.IsWorkerDirMixin,
 
         exit_code = stop.stop(self.config)
         self.assertEqual(exit_code, 0)
-        mock_stopWorker.assert_called_once_with(self.config["basedir"],
-                                                self.config["quiet"],
-                                                "TERM")
+        mock_stopWorker.assert_called_once_with(
+            self.config["basedir"], self.config["quiet"], "TERM"
+        )
 
     def test_failed_stop(self):
         """
@@ -187,6 +181,6 @@ class TestStop(misc.IsWorkerDirMixin,
 
         exit_code = stop.stop(self.config)
         self.assertEqual(exit_code, 17)
-        mock_stopWorker.assert_called_once_with(self.config["basedir"],
-                                                self.config["quiet"],
-                                                "TERM")
+        mock_stopWorker.assert_called_once_with(
+            self.config["basedir"], self.config["quiet"], "TERM"
+        )

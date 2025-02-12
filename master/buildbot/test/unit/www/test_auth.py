@@ -13,7 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-import mock
+from unittest import mock
 
 from twisted.cred.checkers import InMemoryUsernamePasswordDatabaseDontUse
 from twisted.cred.credentials import UsernamePassword
@@ -31,20 +31,19 @@ from buildbot.www import auth
 
 
 class AuthResourceMixin:
-
+    @defer.inlineCallbacks
     def setUpAuthResource(self):
-        self.master = self.make_master(url='h:/a/b/')
+        self.master = yield self.make_master(url='h:/a/b/')
         self.auth = self.master.config.www['auth']
         self.master.www.auth = self.auth
         self.auth.master = self.master
 
 
-class AuthRootResource(TestReactorMixin, www.WwwTestMixin, AuthResourceMixin,
-                       unittest.TestCase):
-
+class AuthRootResource(TestReactorMixin, www.WwwTestMixin, AuthResourceMixin, unittest.TestCase):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpAuthResource()
+        yield self.setUpAuthResource()
         self.rsrc = auth.AuthRootResource(self.master)
 
     def test_getChild_login(self):
@@ -61,11 +60,11 @@ class AuthRootResource(TestReactorMixin, www.WwwTestMixin, AuthResourceMixin,
 
 
 class AuthBase(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.auth = auth.AuthBase()
-        self.master = self.make_master(url='h:/a/b/')
+        self.master = yield self.make_master(url='h:/a/b/')
         self.auth.master = self.master
         self.req = self.make_request(b'/')
 
@@ -83,45 +82,40 @@ class AuthBase(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
         self.auth.userInfoProvider.getUserInfo = lambda un: {'info': un}
         self.req.session.user_info = {'username': 'elvira'}
         yield self.auth.updateUserInfo(self.req)
-        self.assertEqual(self.req.session.user_info,
-                         {'info': 'elvira', 'username': 'elvira'})
+        self.assertEqual(self.req.session.user_info, {'info': 'elvira', 'username': 'elvira'})
 
     def getConfigDict(self):
-        self.assertEqual(auth.getConfigDict(),
-                         {'name': 'AuthBase'})
+        self.assertEqual(auth.getConfigDict(), {'name': 'AuthBase'})
 
 
 class UseAuthInfoProviderBase(unittest.TestCase):
-
     @defer.inlineCallbacks
     def test_getUserInfo(self):
         uip = auth.UserInfoProviderBase()
-        self.assertEqual((yield uip.getUserInfo('jess')),
-                         {'email': 'jess'})
+        self.assertEqual((yield uip.getUserInfo('jess')), {'email': 'jess'})
 
 
 class NoAuth(unittest.TestCase):
-
     def test_exists(self):
-        assert auth.NoAuth
+        assert auth.NoAuth  # type: ignore[truthy-function]
 
 
 class RemoteUserAuth(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.auth = auth.RemoteUserAuth(header=b'HDR')
-        self.make_master()
+        yield self.make_master()
         self.request = self.make_request(b'/')
 
     @defer.inlineCallbacks
     def test_maybeAutoLogin(self):
         self.request.input_headers[b'HDR'] = b'rachel@foo.com'
         yield self.auth.maybeAutoLogin(self.request)
-        self.assertEqual(self.request.session.user_info, {
-                         'username': 'rachel',
-                         'realm': 'foo.com',
-                         'email': 'rachel'})
+        self.assertEqual(
+            self.request.session.user_info,
+            {'username': 'rachel', 'realm': 'foo.com', 'email': 'rachel'},
+        )
 
     @defer.inlineCallbacks
     def test_maybeAutoLogin_no_header(self):
@@ -142,14 +136,17 @@ class RemoteUserAuth(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
         else:
             self.fail("403 expected")
 
+    def test_get_login_resource_does_not_throw(self):
+        self.auth.getLoginResource()
+
 
 class AuthRealm(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.auth = auth.RemoteUserAuth(header=b'HDR')
         self.auth = auth.NoAuth()
-        self.make_master()
+        yield self.make_master()
 
     def test_requestAvatar(self):
         realm = auth.AuthRealm(self.master, self.auth)
@@ -158,44 +155,38 @@ class AuthRealm(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
         self.assertIsInstance(rsrc, auth.PreAuthenticatedLoginResource)
 
 
-class TwistedICredAuthBase(TestReactorMixin, www.WwwTestMixin,
-                           unittest.TestCase):
-
+class TwistedICredAuthBase(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
     def setUp(self):
         self.setup_test_reactor()
 
     # twisted.web makes it difficult to simulate the authentication process, so
     # this only tests the mechanics of the getLoginResource method.
 
+    @defer.inlineCallbacks
     def test_getLoginResource(self):
         self.auth = auth.TwistedICredAuthBase(
             credentialFactories=[BasicCredentialFactory("buildbot")],
-            checkers=[InMemoryUsernamePasswordDatabaseDontUse(good=b'guy')])
-        self.auth.master = self.make_master(url='h:/a/b/')
+            checkers=[InMemoryUsernamePasswordDatabaseDontUse(good=b'guy')],
+        )
+        self.auth.master = yield self.make_master(url='h:/a/b/')
         rsrc = self.auth.getLoginResource()
         self.assertIsInstance(rsrc, HTTPAuthSessionWrapper)
 
 
 class UserPasswordAuth(www.WwwTestMixin, unittest.TestCase):
-
     def test_passwordStringToBytes(self):
-        login = {"user_string": "password",
-                 "user_bytes": b"password"}
-        correct_login = {b"user_string": b"password",
-                         b"user_bytes": b"password"}
+        login = {"user_string": "password", "user_bytes": b"password"}
+        correct_login = {b"user_string": b"password", b"user_bytes": b"password"}
         self.auth = auth.UserPasswordAuth(login)
         self.assertEqual(self.auth.checkers[0].users, correct_login)
 
-        login = [("user_string", "password"),
-                 ("user_bytes", b"password")]
-        correct_login = {b"user_string": b"password",
-                         b"user_bytes": b"password"}
+        login = [("user_string", "password"), ("user_bytes", b"password")]
+        correct_login = {b"user_string": b"password", b"user_bytes": b"password"}
         self.auth = auth.UserPasswordAuth(login)
         self.assertEqual(self.auth.checkers[0].users, correct_login)
 
 
 class CustomAuth(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
-
     class MockCustomAuth(auth.CustomAuth):
         def check_credentials(self, us, ps):
             return us == 'fellow' and ps == 'correct'
@@ -210,33 +201,34 @@ class CustomAuth(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
         result_good = yield self.auth.checkers[0].requestAvatarId(cred_good)
         self.assertEqual(result_good, 'fellow')
         cred_bad = UsernamePassword('bandid', 'incorrect')
-        defer_bad = self.auth.checkers[0].requestAvatarId(cred_bad)
-        yield self.assertFailure(defer_bad, UnauthorizedLogin)
+        with self.assertRaises(UnauthorizedLogin):
+            yield self.auth.checkers[0].requestAvatarId(cred_bad)
 
 
-class LoginResource(TestReactorMixin, www.WwwTestMixin, AuthResourceMixin,
-                    unittest.TestCase):
-
+class LoginResource(TestReactorMixin, www.WwwTestMixin, AuthResourceMixin, unittest.TestCase):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpAuthResource()
+        yield self.setUpAuthResource()
 
     @defer.inlineCallbacks
     def test_render(self):
         self.rsrc = auth.LoginResource(self.master)
         self.rsrc.renderLogin = mock.Mock(
-            spec=self.rsrc.renderLogin, return_value=defer.succeed(b'hi'))
+            spec=self.rsrc.renderLogin, return_value=defer.succeed(b'hi')
+        )
 
         yield self.render_resource(self.rsrc, b'/auth/login')
         self.rsrc.renderLogin.assert_called_with(mock.ANY)
 
 
-class PreAuthenticatedLoginResource(TestReactorMixin, www.WwwTestMixin,
-                                    AuthResourceMixin, unittest.TestCase):
-
+class PreAuthenticatedLoginResource(
+    TestReactorMixin, www.WwwTestMixin, AuthResourceMixin, unittest.TestCase
+):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpAuthResource()
+        yield self.setUpAuthResource()
         self.rsrc = auth.PreAuthenticatedLoginResource(self.master, 'him')
 
     @defer.inlineCallbacks
@@ -254,16 +246,14 @@ class PreAuthenticatedLoginResource(TestReactorMixin, www.WwwTestMixin,
         self.assertEqual(res, {'redirected': b'h:/a/b/#/'})
         self.assertFalse(self.auth.maybeAutoLogin.called)
         self.auth.updateUserInfo.assert_called_with(mock.ANY)
-        self.assertEqual(self.master.session.user_info,
-                         {'email': 'him@org', 'username': 'him'})
+        self.assertEqual(self.master.session.user_info, {'email': 'him@org', 'username': 'him'})
 
 
-class LogoutResource(TestReactorMixin, www.WwwTestMixin, AuthResourceMixin,
-                     unittest.TestCase):
-
+class LogoutResource(TestReactorMixin, www.WwwTestMixin, AuthResourceMixin, unittest.TestCase):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpAuthResource()
+        yield self.setUpAuthResource()
         self.rsrc = auth.LogoutResource(self.master)
 
     @defer.inlineCallbacks

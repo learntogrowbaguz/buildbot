@@ -25,6 +25,7 @@ from buildbot.data import resultspec
 from buildbot.util import bytes2unicode
 from buildbot.util import pathmatch
 from buildbot.util import service
+from buildbot.warnings import warn_deprecated
 
 
 class Updates:
@@ -38,12 +39,14 @@ class RTypes:
 
 
 class DataConnector(service.AsyncService):
-
     submodules = [
         'buildbot.data.build_data',
         'buildbot.data.builders',
         'buildbot.data.builds',
         'buildbot.data.buildrequests',
+        'buildbot.data.codebases',
+        'buildbot.data.codebase_commits',
+        'buildbot.data.codebase_branches',
         'buildbot.data.workers',
         'buildbot.data.steps',
         'buildbot.data.logs',
@@ -56,6 +59,7 @@ class DataConnector(service.AsyncService):
         'buildbot.data.schedulers',
         'buildbot.data.forceschedulers',
         'buildbot.data.root',
+        'buildbot.data.projects',
         'buildbot.data.properties',
         'buildbot.data.test_results',
         'buildbot.data.test_result_sets',
@@ -63,7 +67,6 @@ class DataConnector(service.AsyncService):
     name = "data"
 
     def __init__(self):
-
         self.matcher = pathmatch.Matcher()
         self.rootLinks = []  # links from the root of the API
 
@@ -78,8 +81,6 @@ class DataConnector(service.AsyncService):
             if inspect.isclass(obj) and issubclass(obj, base.ResourceType):
                 rtype = obj(self.master)
                 setattr(self.rtypes, rtype.name, rtype)
-                setattr(self.plural_rtypes, rtype.plural, rtype)
-                self.graphql_rtypes[rtype.entityType.toGraphQLTypeName()] = rtype
                 # put its update methods into our 'updates' attribute
                 for name in dir(rtype):
                     o = getattr(rtype, name)
@@ -92,8 +93,7 @@ class DataConnector(service.AsyncService):
                     clsdict = ep.__class__.__dict__
                     pathPatterns = clsdict.get('pathPatterns', '')
                     pathPatterns = pathPatterns.split()
-                    pathPatterns = [tuple(pp.split('/')[1:])
-                                    for pp in pathPatterns]
+                    pathPatterns = [tuple(pp.split('/')[1:]) for pp in pathPatterns]
                     for pp in pathPatterns:
                         # special-case the root
                         if pp == ('',):
@@ -105,9 +105,7 @@ class DataConnector(service.AsyncService):
 
     def _setup(self):
         self.updates = Updates()
-        self.graphql_rtypes = {}
         self.rtypes = RTypes()
-        self.plural_rtypes = RTypes()
         for moduleName in self.submodules:
             module = reflect.namedModule(moduleName)
             self._scanModule(module)
@@ -117,29 +115,16 @@ class DataConnector(service.AsyncService):
             return self.matcher[path]
         except KeyError as e:
             raise exceptions.InvalidPathError(
-                "Invalid path: " + "/".join([str(p) for p in path])) from e
+                "Invalid path: " + "/".join([str(p) for p in path])
+            ) from e
 
     def getResourceType(self, name):
         return getattr(self.rtypes, name, None)
 
-    def getEndPointForResourceName(self, name):
-        rtype = getattr(self.rtypes, name, None)
-        rtype_plural = getattr(self.plural_rtypes, name, None)
-        if rtype is not None:
-            return rtype.getDefaultEndpoint()
-        elif rtype_plural is not None:
-            return rtype_plural.getCollectionEndpoint()
-        return None
-
-    def getResourceTypeForGraphQlType(self, type):
-        if type not in self.graphql_rtypes:
-            raise RuntimeError(f"Can't get rtype for {type}: {self.graphql_rtypes.keys()}")
-        return self.graphql_rtypes.get(type)
-
-    def get(self, path, filters=None, fields=None, order=None,
-            limit=None, offset=None):
-        resultSpec = resultspec.ResultSpec(filters=filters, fields=fields,
-                                           order=order, limit=limit, offset=offset)
+    def get(self, path, filters=None, fields=None, order=None, limit=None, offset=None):
+        resultSpec = resultspec.ResultSpec(
+            filters=filters, fields=fields, order=order, limit=limit, offset=offset
+        )
         return self.get_with_resultspec(path, resultSpec)
 
     @defer.inlineCallbacks
@@ -155,25 +140,27 @@ class DataConnector(service.AsyncService):
         return endpoint.control(action, args, kwargs)
 
     def produceEvent(self, rtype, msg, event):
-        # warning, this is temporary api, until all code is migrated to data
-        # api
+        warn_deprecated(
+            '4.3.0',
+            'DataConnector.produceEvent is deprecated, use data API update methods',
+        )
         rsrc = self.getResourceType(rtype)
         return rsrc.produceEvent(msg, event)
 
-    @functools.lru_cache(1)
+    @functools.lru_cache(1)  # noqa: B019
     def allEndpoints(self):
-        """return the full spec of the connector as a list of dicts
-        """
+        """return the full spec of the connector as a list of dicts"""
         paths = []
         for k, v in sorted(self.matcher.iterPatterns()):
-            paths.append(dict(path="/".join(k),
-                              plural=str(v.rtype.plural),
-                              type=str(v.rtype.entityType.name),
-                              type_spec=v.rtype.entityType.getSpec()))
+            paths.append({
+                "path": '/'.join(k),
+                "plural": str(v.rtype.plural),
+                "type": str(v.rtype.entityType.name),
+                "type_spec": v.rtype.entityType.getSpec(),
+            })
         return paths
 
     def resultspec_from_jsonapi(self, req_args, entityType, is_collection):
-
         def checkFields(fields, negOk=False):
             for field in fields:
                 k = bytes2unicode(field)
@@ -183,9 +170,8 @@ class DataConnector(service.AsyncService):
                     raise exceptions.InvalidQueryParameter(f"no such field '{k}'")
 
         limit = offset = order = fields = None
-        filters, properties = [], []
-        limit = offset = order = fields = None
-        filters, properties = [], []
+        filters = []
+        properties = []
         for arg in req_args:
             argStr = bytes2unicode(arg)
             if argStr == 'order':
@@ -213,7 +199,8 @@ class DataConnector(service.AsyncService):
                         props.append(bytes2unicode(v))
                 except Exception as e:
                     raise exceptions.InvalidQueryParameter(
-                        f'invalid property value for {arg}') from e
+                        f'invalid property value for {arg}'
+                    ) from e
                 properties.append(resultspec.Property(arg, 'eq', props))
             elif argStr in entityType.fieldNames:
                 field = entityType.fields[argStr]
@@ -221,23 +208,26 @@ class DataConnector(service.AsyncService):
                     values = [field.valueFromString(v) for v in req_args[arg]]
                 except Exception as e:
                     raise exceptions.InvalidQueryParameter(
-                        f'invalid filter value for {argStr}') from e
+                        f'invalid filter value for {argStr}'
+                    ) from e
 
                 filters.append(resultspec.Filter(argStr, 'eq', values))
             elif '__' in argStr:
                 field, op = argStr.rsplit('__', 1)
                 args = req_args[arg]
-                operators = (resultspec.Filter.singular_operators
-                             if len(args) == 1
-                             else resultspec.Filter.plural_operators)
+                operators = (
+                    resultspec.Filter.singular_operators
+                    if len(args) == 1
+                    else resultspec.Filter.plural_operators
+                )
                 if op in operators and field in entityType.fieldNames:
                     fieldType = entityType.fields[field]
                     try:
-                        values = [fieldType.valueFromString(v)
-                                  for v in req_args[arg]]
+                        values = [fieldType.valueFromString(v) for v in req_args[arg]]
                     except Exception as e:
                         raise exceptions.InvalidQueryParameter(
-                            f'invalid filter value for {argStr}') from e
+                            f'invalid filter value for {argStr}'
+                        ) from e
                     filters.append(resultspec.Filter(field, op, values))
             else:
                 raise exceptions.InvalidQueryParameter(f"unrecognized query parameter '{argStr}'")
@@ -253,8 +243,14 @@ class DataConnector(service.AsyncService):
                     raise exceptions.InvalidQueryParameter("cannot filter on un-selected fields")
 
         # build the result spec
-        rspec = resultspec.ResultSpec(fields=fields, limit=limit, offset=offset,
-                                      order=order, filters=filters, properties=properties)
+        rspec = resultspec.ResultSpec(
+            fields=fields,
+            limit=limit,
+            offset=offset,
+            order=order,
+            filters=filters,
+            properties=properties,
+        )
 
         # for singular endpoints, only allow fields
         if not is_collection:

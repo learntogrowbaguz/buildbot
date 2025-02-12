@@ -1,5 +1,3 @@
-import gc
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
@@ -13,22 +11,18 @@ from buildbot.test.util.config import ConfigErrorsMixin
 
 
 class FakeBuildWithMaster(FakeBuild):
-
     def __init__(self, master):
         super().__init__()
         self.master = master
 
 
-class TestInterpolateSecrets(TestReactorMixin, unittest.TestCase,
-                             ConfigErrorsMixin):
-
+class TestInterpolateSecrets(TestReactorMixin, unittest.TestCase, ConfigErrorsMixin):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         fakeStorageService = FakeSecretStorage()
-        fakeStorageService.reconfigService(secretdict={"foo": "bar",
-                                                       "other": "value"})
+        fakeStorageService.reconfigService(secretdict={"foo": "bar", "other": "value"})
         self.secretsrv = SecretManager()
         self.secretsrv.services = [fakeStorageService]
         yield self.secretsrv.setServiceParent(self.master)
@@ -43,39 +37,34 @@ class TestInterpolateSecrets(TestReactorMixin, unittest.TestCase,
     @defer.inlineCallbacks
     def test_secret_not_found(self):
         command = Interpolate("echo %(secret:fuo)s")
-        yield self.assertFailure(self.build.render(command), defer.FirstError)
-        gc.collect()
-        self.flushLoggedErrors(defer.FirstError)
-        self.flushLoggedErrors(KeyError)
+        with self.assertRaises(defer.FirstError):
+            yield self.build.render(command)
 
 
-class TestInterpolateSecretsNoService(TestReactorMixin, unittest.TestCase,
-                                      ConfigErrorsMixin):
-
+class TestInterpolateSecretsNoService(TestReactorMixin, unittest.TestCase, ConfigErrorsMixin):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         self.build = FakeBuildWithMaster(self.master)
 
     @defer.inlineCallbacks
     def test_secret(self):
         command = Interpolate("echo %(secret:fuo)s")
-        yield self.assertFailure(self.build.render(command), defer.FirstError)
-        gc.collect()
-        self.flushLoggedErrors(defer.FirstError)
-        self.flushLoggedErrors(KeyError)
+        with self.assertRaises(defer.FirstError):
+            yield self.build.render(command)
 
 
 class TestInterpolateSecretsHiddenSecrets(TestReactorMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         fakeStorageService = FakeSecretStorage()
         password = "bar"
         fakeStorageService.reconfigService(
-            secretdict={"foo": password, "other": password + "random", "empty": ""})
+            secretdict={"foo": password, "other": password + "random", "empty": ""}
+        )
         self.secretsrv = SecretManager()
         self.secretsrv.services = [fakeStorageService]
         yield self.secretsrv.setServiceParent(self.master)

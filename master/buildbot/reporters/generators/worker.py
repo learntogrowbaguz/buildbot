@@ -13,6 +13,9 @@
 #
 # Copyright Buildbot Team Members
 
+from typing import ClassVar
+from typing import Sequence
+
 from twisted.internet import defer
 from zope.interface import implementer
 
@@ -26,8 +29,7 @@ ENCODING = 'utf-8'
 
 @implementer(interfaces.IReportGenerator)
 class WorkerMissingGenerator(util.ComparableMixin):
-
-    compare_attrs = ['workers', 'formatter']
+    compare_attrs: ClassVar[Sequence[str]] = ['workers', 'formatter']
 
     wanted_event_keys = [
         ('workers', None, 'missing'),
@@ -53,8 +55,10 @@ class WorkerMissingGenerator(util.ComparableMixin):
         subject = msg['subject']
         if subject is None:
             subject = f"Buildbot worker {worker['name']} missing"
-        assert msg['type'] in ('plain', 'html'), \
-            f"'{msg['type']}' message type must be 'plain' or 'html'."
+        assert msg['type'] in (
+            'plain',
+            'html',
+        ), f"'{msg['type']}' message type must be 'plain' or 'html'."
 
         return {
             'body': body,
@@ -62,10 +66,11 @@ class WorkerMissingGenerator(util.ComparableMixin):
             'type': msg['type'],
             'results': None,
             'builds': None,
+            "buildset": None,
             'users': worker['notify'],
             'patches': None,
             'logs': None,
-            'worker': worker['name']
+            'worker': worker['name'],
         }
 
     def generate_name(self):

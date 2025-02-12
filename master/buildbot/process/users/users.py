@@ -13,16 +13,21 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
 
 import os
 from binascii import hexlify
 from hashlib import sha1
+from typing import TYPE_CHECKING
 
 from twisted.internet import defer
 from twisted.python import log
 
 from buildbot.util import bytes2unicode
 from buildbot.util import unicode2bytes
+
+if TYPE_CHECKING:
+    from buildbot.db.users import UserModel
 
 # TODO: fossil comes from a plugin. We should have an API that plugins could use to
 # register allowed user types.
@@ -51,7 +56,7 @@ def createUserObject(master, author, src=None):
         return defer.succeed(None)
 
     if src in srcs:
-        usdict = dict(identifier=author, attr_type=src, attr_data=author)
+        usdict = {"identifier": author, "attr_type": src, "attr_data": author}
     else:
         log.msg(f"Unrecognized source argument: {src}")
         return defer.succeed(None)
@@ -59,20 +64,24 @@ def createUserObject(master, author, src=None):
     return master.db.users.findUserByAttr(
         identifier=usdict['identifier'],
         attr_type=usdict['attr_type'],
-        attr_data=usdict['attr_data'])
+        attr_data=usdict['attr_data'],
+    )
 
 
-def _extractContact(usdict, contact_types, uid):
-    if usdict:
+def _extractContact(user: UserModel | None, contact_types, uid):
+    if user is not None and user.attributes is not None:
         for type in contact_types:
-            contact = usdict.get(type)
+            contact = user.attributes.get(type)
             if contact:
                 break
     else:
         contact = None
     if contact is None:
-        log.msg(format="Unable to find any of %(contact_types)r for uid: %(uid)r",
-                contact_types=contact_types, uid=uid)
+        log.msg(
+            format="Unable to find any of %(contact_types)r for uid: %(uid)r",
+            contact_types=contact_types,
+            uid=uid,
+        )
     return contact
 
 
@@ -127,7 +136,7 @@ def check_passwd(guess, passwd):
     @returns: boolean
     """
     m = sha1()
-    salt = passwd[:salt_len * 2]  # salt_len * 2 due to encode('hex_codec')
+    salt = passwd[: salt_len * 2]  # salt_len * 2 due to encode('hex_codec')
     m.update(unicode2bytes(guess) + unicode2bytes(salt))
     crypted_guess = bytes2unicode(salt) + m.hexdigest()
 

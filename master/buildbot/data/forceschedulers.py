@@ -23,20 +23,20 @@ from buildbot.www.rest import BadJsonRpc2
 
 
 def forceScheduler2Data(sched):
-    ret = dict(all_fields=[],
-               name=str(sched.name),
-               button_name=str(sched.buttonName),
-               label=str(sched.label),
-               builder_names=[str(name)
-                              for name in sched.builderNames],
-               enabled=sched.enabled)
+    ret = {
+        "all_fields": [],
+        "name": str(sched.name),
+        "button_name": str(sched.buttonName),
+        "label": str(sched.label),
+        "builder_names": [str(name) for name in sched.builderNames],
+        "enabled": sched.enabled,
+    }
     ret["all_fields"] = [field.getSpec() for field in sched.all_fields]
     return ret
 
 
 class ForceSchedulerEndpoint(base.Endpoint):
-
-    isCollection = False
+    kind = base.EndpointKind.SINGLE
     pathPatterns = """
         /forceschedulers/i:schedulername
     """
@@ -70,8 +70,7 @@ class ForceSchedulerEndpoint(base.Endpoint):
 
 
 class ForceSchedulersEndpoint(base.Endpoint):
-
-    isCollection = True
+    kind = base.EndpointKind.COLLECTION
     pathPatterns = """
         /forceschedulers
         /builders/:builderid/forceschedulers
@@ -82,22 +81,21 @@ class ForceSchedulersEndpoint(base.Endpoint):
     def get(self, resultSpec, kwargs):
         ret = []
         builderid = kwargs.get('builderid', None)
+        bdict = None
         if builderid is not None:
             bdict = yield self.master.db.builders.getBuilder(builderid)
         for sched in self.master.allSchedulers():
             if isinstance(sched, forcesched.ForceScheduler):
-                if builderid is not None and bdict['name'] not in sched.builderNames:
+                if builderid is not None and bdict.name not in sched.builderNames:
                     continue
                 ret.append(forceScheduler2Data(sched))
         return ret
 
 
 class ForceScheduler(base.ResourceType):
-
     name = "forcescheduler"
     plural = "forceschedulers"
     endpoints = [ForceSchedulerEndpoint, ForceSchedulersEndpoint]
-    keyField = "name"
 
     class EntityType(types.Entity):
         name = types.Identifier(50)
@@ -106,4 +104,5 @@ class ForceScheduler(base.ResourceType):
         builder_names = types.List(of=types.Identifier(50))
         enabled = types.Boolean()
         all_fields = types.List(of=types.JsonObject())
-    entityType = EntityType(name, 'Forcescheduler')
+
+    entityType = EntityType(name)

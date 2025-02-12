@@ -13,8 +13,11 @@
 #
 # Copyright Buildbot Team Members
 
-import html  # py2: via future
+from __future__ import annotations
+
+import html
 import time
+from typing import TYPE_CHECKING
 
 from twisted.internet import defer
 from twisted.python import log
@@ -23,64 +26,80 @@ from buildbot import util
 from buildbot.process.properties import Properties
 from buildbot.util import datetime2epoch
 
+if TYPE_CHECKING:
+    from buildbot.db.changes import ChangeModel
+
 
 class Change:
-
     """I represent a single change to the source tree. This may involve several
     files, but they are all changed by the same person, and there is a change
     comment for the group as a whole."""
 
-    number = None
-    branch = None
-    category = None
-    revision = None  # used to create a source-stamp
-    links = []  # links are gone, but upgrade code expects this attribute
+    number: int | None = None
+    branch: str | None = None
+    category: str | None = None
+    revision: str | None = None  # used to create a source-stamp
+    links: list[str] = []  # links are gone, but upgrade code expects this attribute
 
     @classmethod
-    def fromChdict(cls, master, chdict):
+    def fromChdict(cls, master, chdict: ChangeModel) -> Change:
         """
-        Class method to create a L{Change} from a dictionary as returned
+        Class method to create a L{Change} from a L{ChangeModel} as returned
         by L{ChangesConnectorComponent.getChange}.
 
         @param master: build master instance
-        @param ssdict: change dictionary
+        @param chdict: change model
 
         @returns: L{Change} via Deferred
         """
         cache = master.caches.get_cache("Changes", cls._make_ch)
-        return cache.get(chdict['changeid'], chdict=chdict, master=master)
+        return cache.get(chdict.changeid, chdict=chdict, master=master)
 
     @classmethod
-    def _make_ch(cls, changeid, master, chdict):
+    def _make_ch(cls, changeid: int, master, chdict: ChangeModel) -> defer.Deferred[Change]:
         change = cls(None, None, None, _fromChdict=True)
-        change.who = chdict['author']
-        change.committer = chdict['committer']
-        change.comments = chdict['comments']
-        change.revision = chdict['revision']
-        change.branch = chdict['branch']
-        change.category = chdict['category']
-        change.revlink = chdict['revlink']
-        change.repository = chdict['repository']
-        change.codebase = chdict['codebase']
-        change.project = chdict['project']
-        change.number = chdict['changeid']
+        change.who = chdict.author
+        change.committer = chdict.committer
+        change.comments = chdict.comments
+        change.revision = chdict.revision
+        change.branch = chdict.branch
+        change.category = chdict.category
+        change.revlink = chdict.revlink
+        change.repository = chdict.repository
+        change.codebase = chdict.codebase
+        change.project = chdict.project
+        change.number = chdict.changeid
 
-        when = chdict['when_timestamp']
+        when = chdict.when_timestamp
         if when:
             when = datetime2epoch(when)
         change.when = when
 
-        change.files = sorted(chdict['files'])
+        change.files = sorted(chdict.files)
 
         change.properties = Properties()
-        for n, (v, s) in chdict['properties'].items():
+        for n, (v, s) in chdict.properties.items():
             change.properties.setProperty(n, v, s)
 
         return defer.succeed(change)
 
-    def __init__(self, who, files, comments, committer=None, revision=None, when=None,
-                 branch=None, category=None, revlink='', properties=None,
-                 repository='', codebase='', project='', _fromChdict=False):
+    def __init__(
+        self,
+        who,
+        files,
+        comments,
+        committer=None,
+        revision=None,
+        when=None,
+        branch=None,
+        category=None,
+        revlink='',
+        properties=None,
+        repository='',
+        codebase='',
+        project='',
+        _fromChdict=False,
+    ):
         if properties is None:
             properties = {}
         # skip all this madness if we're being built from the database
@@ -103,8 +122,7 @@ class Change:
         elif when > now:
             # this happens when the committing system has an incorrect clock, for example.
             # handle it gracefully
-            log.msg(
-                "received a Change with when > now; assuming the change happened now")
+            log.msg("received a Change with when > now; assuming the change happened now")
             self.when = now
         else:
             self.when = when
@@ -129,12 +147,22 @@ class Change:
             self.revlink = ""
 
     def __str__(self):
-        return ("Change(revision=%r, who=%r, committer=%r, branch=%r, comments=%r, " +
-                "when=%r, category=%r, project=%r, repository=%r, " +
-                "codebase=%r)") % (
-            self.revision, self.who, self.committer, self.branch, self.comments,
-            self.when, self.category, self.project, self.repository,
-            self.codebase)
+        return (
+            "Change(revision=%r, who=%r, committer=%r, branch=%r, comments=%r, "
+            + "when=%r, category=%r, project=%r, repository=%r, "
+            + "codebase=%r)"
+        ) % (
+            self.revision,
+            self.who,
+            self.committer,
+            self.branch,
+            self.comments,
+            self.when,
+            self.category,
+            self.project,
+            self.repository,
+            self.codebase,
+        )
 
     def __eq__(self, other):
         return self.number == other.number
@@ -174,8 +202,8 @@ class Change:
         return data
 
     def asDict(self):
-        '''returns a dictionary with suitable info for html/mail rendering'''
-        files = [dict(name=f) for f in self.files]
+        """returns a dictionary with suitable info for html/mail rendering"""
+        files = [{"name": f} for f in self.files]
         files.sort(key=lambda a: a['name'])
 
         result = {
@@ -195,7 +223,7 @@ class Change:
             'properties': self.properties.asList(),
             'repository': getattr(self, 'repository', None),
             'codebase': getattr(self, 'codebase', ''),
-            'project': getattr(self, 'project', None)
+            'project': getattr(self, 'project', None),
         }
         return result
 
@@ -205,8 +233,7 @@ class Change:
     def getTime(self):
         if not self.when:
             return "?"
-        return time.strftime("%a %d %b %Y %H:%M:%S",
-                             time.localtime(self.when))
+        return time.strftime("%a %d %b %Y %H:%M:%S", time.localtime(self.when))
 
     def getTimes(self):
         return (self.when, None)

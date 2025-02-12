@@ -13,7 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
@@ -28,11 +28,10 @@ from buildbot.test.reactor import TestReactorMixin
 
 
 class TestCleanShutdown(TestReactorMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantData=True)
         self.botmaster = BotMaster()
         yield self.botmaster.setServiceParent(self.master)
         self.botmaster.startService()
@@ -62,6 +61,7 @@ class TestCleanShutdown(TestReactorMixin, unittest.TestCase):
         self.reason = reason
         self.results = results
         self.finishFakeBuild()
+        return defer.succeed(None)
 
     def finishFakeBuild(self):
         self.fake_builder.building = []
@@ -128,8 +128,11 @@ class TestCleanShutdown(TestReactorMixin, unittest.TestCase):
         # build.
         self.assertReactorNotStopped()
 
-        # but the BuildRequestDistributor should not be running
-        self.assertFalse(self.botmaster.brd.running)
+        # the BuildRequestDistributor is still running
+        # distributing child BuildRequests blocking
+        # parent Build from finishing
+        self.assertTrue(self.botmaster.brd.running)
+        self.assertTrue(self.botmaster.brd.distribute_only_waited_childs)
 
         # Cancel the shutdown
         self.botmaster.cancelCleanShutdown()
@@ -141,45 +144,53 @@ class TestCleanShutdown(TestReactorMixin, unittest.TestCase):
         self.assertReactorNotStopped()
 
         # and the BuildRequestDistributor should be, as well
+        # no longer limiting builds to those with parents
         self.assertTrue(self.botmaster.brd.running)
+        self.assertFalse(self.botmaster.brd.distribute_only_waited_childs)
 
 
 class TestBotMaster(TestReactorMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantMq=True, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantMq=True, wantData=True)
         self.master.mq = self.master.mq
         self.master.botmaster.disownServiceParent()
         self.botmaster = BotMaster()
         yield self.botmaster.setServiceParent(self.master)
         self.new_config = mock.Mock()
         self.botmaster.startService()
-
-    def tearDown(self):
-        return self.botmaster.stopService()
+        self.addCleanup(self.botmaster.stopService)
 
     @defer.inlineCallbacks
     def test_reconfigServiceWithBuildbotConfig(self):
         # check that reconfigServiceBuilders is called.
-        self.patch(self.botmaster, 'reconfigServiceBuilders',
-                   mock.Mock(side_effect=lambda c: defer.succeed(None)))
-        self.patch(self.botmaster, 'maybeStartBuildsForAllBuilders',
-                   mock.Mock())
+        self.patch(
+            self.botmaster, 'reconfigProjects', mock.Mock(side_effect=lambda c: defer.succeed(None))
+        )
+        self.patch(
+            self.botmaster,
+            'reconfig_codebases',
+            mock.Mock(side_effect=lambda c: defer.succeed(None)),
+        )
+        self.patch(
+            self.botmaster,
+            'reconfigServiceBuilders',
+            mock.Mock(side_effect=lambda c: defer.succeed(None)),
+        )
+        self.patch(self.botmaster, 'maybeStartBuildsForAllBuilders', mock.Mock())
 
         new_config = mock.Mock()
         yield self.botmaster.reconfigServiceWithBuildbotConfig(new_config)
 
-        self.botmaster.reconfigServiceBuilders.assert_called_with(
-            new_config)
-        self.assertTrue(
-            self.botmaster.maybeStartBuildsForAllBuilders.called)
+        self.botmaster.reconfigServiceBuilders.assert_called_with(new_config)
+        self.botmaster.reconfigProjects.assert_called_with(new_config)
+        self.botmaster.reconfig_codebases.assert_called_with(new_config)
+        self.assertTrue(self.botmaster.maybeStartBuildsForAllBuilders.called)
 
     @defer.inlineCallbacks
     def test_reconfigServiceBuilders_add_remove(self):
-        bc = config.BuilderConfig(name='bldr', factory=factory.BuildFactory(),
-                                  workername='f')
+        bc = config.BuilderConfig(name='bldr', factory=factory.BuildFactory(), workername='f')
         self.new_config.builders = [bc]
 
         yield self.botmaster.reconfigServiceBuilders(self.new_config)

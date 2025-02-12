@@ -16,9 +16,12 @@
 
 import time
 from datetime import datetime
+from typing import ClassVar
+from typing import Sequence
 
 from twisted.internet import defer
 from twisted.python import log
+from unidiff import PatchSet
 
 from buildbot.changes import base
 from buildbot.util import bytes2unicode
@@ -30,10 +33,16 @@ from buildbot.util.pullrequest import PullRequestMixin
 
 
 class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullRequestMixin):
-
-    compare_attrs = ("owner", "slug", "branch",
-                     "pollInterval", "useTimestamps",
-                     "category", "project", "pollAtLaunch")
+    compare_attrs: ClassVar[Sequence[str]] = (
+        "owner",
+        "slug",
+        "branch",
+        "pollInterval",
+        "useTimestamps",
+        "category",
+        "project",
+        "pollAtLaunch",
+    )
 
     db_class_name = 'BitbucketPullrequestPoller'
     property_basename = "bitbucket"
@@ -45,28 +54,49 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
 
         super().__init__(owner, slug, **kwargs)
 
-    def checkConfig(self, owner, slug,
-                    branch=None, pollInterval=10 * 60, useTimestamps=True,
-                    category=None, project='', pullrequest_filter=True,
-                    pollAtLaunch=False, auth=None, bitbucket_property_whitelist=None):
-        super().checkConfig(name=self.build_name(owner, slug),
-                            pollInterval=pollInterval, pollAtLaunch=pollAtLaunch)
+    def checkConfig(
+        self,
+        owner,
+        slug,
+        branch=None,
+        pollInterval=10 * 60,
+        useTimestamps=True,
+        category=None,
+        project='',
+        pullrequest_filter=True,
+        pollAtLaunch=False,
+        auth=None,
+        bitbucket_property_whitelist=None,
+    ):
+        super().checkConfig(
+            name=self.build_name(owner, slug), pollInterval=pollInterval, pollAtLaunch=pollAtLaunch
+        )
 
     @defer.inlineCallbacks
-    def reconfigService(self, owner, slug,
-                        branch=None, pollInterval=10 * 60, useTimestamps=True,
-                        category=None, project='', pullrequest_filter=True,
-                        pollAtLaunch=False, auth=None, bitbucket_property_whitelist=None):
+    def reconfigService(
+        self,
+        owner,
+        slug,
+        branch=None,
+        pollInterval=10 * 60,
+        useTimestamps=True,
+        category=None,
+        project='',
+        pullrequest_filter=True,
+        pollAtLaunch=False,
+        auth=None,
+        bitbucket_property_whitelist=None,
+    ):
         self.owner = owner
         self.slug = slug
         self.branch = branch
         if bitbucket_property_whitelist is None:
             bitbucket_property_whitelist = []
 
-        if hasattr(pullrequest_filter, '__call__'):
+        if callable(pullrequest_filter):
             self.pullrequest_filter = pullrequest_filter
         else:
-            self.pullrequest_filter = (lambda _: pullrequest_filter)
+            self.pullrequest_filter = lambda _: pullrequest_filter
 
         self.lastChange = time.time()
         self.lastPoll = time.time()
@@ -76,26 +106,31 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
         self.external_property_whitelist = bitbucket_property_whitelist
 
         base_url = "https://api.bitbucket.org/2.0"
-        self._http = yield httpclientservice.HTTPClientService.getService(self.master, base_url,
-                                                                          auth=auth)
+        self._http = yield httpclientservice.HTTPSession(
+            self.master.httpservice, base_url, auth=auth
+        )
 
-        yield super().reconfigService(self.build_name(owner, slug),
-                                      pollInterval=pollInterval, pollAtLaunch=pollAtLaunch)
+        yield super().reconfigService(
+            self.build_name(owner, slug), pollInterval=pollInterval, pollAtLaunch=pollAtLaunch
+        )
 
     def build_name(self, owner, slug):
         return '/'.join([owner, slug])
 
     def describe(self):
-        return "BitbucketPullrequestPoller watching the "\
+        return (
+            "BitbucketPullrequestPoller watching the "
             f"Bitbucket repository {self.owner}/{self.slug}, branch: {self.branch}"
+        )
 
     @deferredLocked('initLock')
     @defer.inlineCallbacks
     def poll(self):
         response = yield self._getChanges()
         if response.code != 200:
-            log.err(f"{self.__class__.__name__}: error {response.code} "
-                    f"while loading {response.url}")
+            log.err(
+                f"{self.__class__.__name__}: error {response.code} while loading {response.url}"
+            )
             return
 
         json_result = yield response.json()
@@ -103,8 +138,10 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
 
     def _getChanges(self):
         self.lastPoll = time.time()
-        log.msg("BitbucketPullrequestPoller: polling "
-                f"Bitbucket repository {self.owner}/{self.slug}, branch: {self.branch}")
+        log.msg(
+            "BitbucketPullrequestPoller: polling "
+            f"Bitbucket repository {self.owner}/{self.slug}, branch: {self.branch}"
+        )
         url = f"/repositories/{self.owner}/{self.slug}/pullrequests"
         return self._http.get(url, timeout=self.pollInterval)
 
@@ -125,9 +162,7 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
                 # compare _short_ hashes to check if the PR has been updated
                 if not current or current[0:12] != revision[0:12]:
                     # parse pull request api page (required for the filter)
-                    response = yield self._http.get(
-                        str(pr['links']['self']['href'])
-                    )
+                    response = yield self._http.get(str(pr['links']['self']['href']))
                     pr_json = yield response.json()
 
                     # filter pull requests by user function
@@ -143,8 +178,8 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
                     # ignored.
                     if self.useTimestamps:
                         updated = datetime.strptime(
-                            pr['updated_on'].split('.')[0],
-                            '%Y-%m-%dT%H:%M:%S')
+                            pr['updated_on'].split('.')[0], '%Y-%m-%dT%H:%M:%S'
+                        )
                     else:
                         updated = epoch2datetime(self.master.reactor.seconds())
                     title = pr['title']
@@ -158,6 +193,16 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
                     # use the full-length hash from now on
                     revision = commit_json['hash']
                     revlink = commit_json['links']['html']['href']
+
+                    # Retrieve the list of added/modified files in the commit
+                    response = yield self._http.get(str(commit_json['links']['diff']['href']))
+                    content = yield response.content()
+                    patchset = PatchSet(content.decode())
+                    files = [
+                        file.path
+                        for file in patchset
+                        if file.is_added_file or file.is_modified_file
+                    ]
 
                     # parse repo api page
                     response = yield self._http.get(
@@ -181,10 +226,12 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
                         category=self.category,
                         project=self.project,
                         repository=bytes2unicode(repo),
-                        properties={'pullrequesturl': prlink,
-                                    **self.extractProperties(pr),
-                                    },
+                        properties={
+                            'pullrequesturl': prlink,
+                            **self.extractProperties(pr),
+                        },
                         src='bitbucket',
+                        files=files,
                     )
 
     def _getCurrentRev(self, pr_id):
@@ -199,7 +246,9 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
             @current.addCallback
             def result_callback(result):
                 return result
+
             return current
+
         return d
 
     def _setCurrentRev(self, pr_id, rev):
@@ -215,4 +264,5 @@ class BitbucketPullrequestPoller(base.ReconfigurablePollingChangeSource, PullReq
     def _getStateObjectId(self):
         # Return a deferred for object id in state db.
         return self.master.db.state.getObjectId(
-            f'{self.owner}/{self.slug}#{self.branch}', self.db_class_name)
+            f'{self.owner}/{self.slug}#{self.branch}', self.db_class_name
+        )

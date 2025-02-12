@@ -13,6 +13,9 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
+import datetime
 import re
 from urllib.parse import urlparse
 
@@ -27,8 +30,10 @@ from buildbot.process.results import SUCCESS
 from buildbot.reporters.base import ReporterBase
 from buildbot.reporters.generators.build import BuildStartEndStatusGenerator
 from buildbot.reporters.generators.build import BuildStatusGenerator
+from buildbot.reporters.generators.buildrequest import BuildRequestGenerator
 from buildbot.reporters.message import MessageFormatterRenderable
 from buildbot.util import bytes2unicode
+from buildbot.util import datetime2epoch
 from buildbot.util import httpclientservice
 from buildbot.util import unicode2bytes
 
@@ -46,20 +51,40 @@ HTTP_CREATED = 201
 
 
 class BitbucketServerStatusPush(ReporterBase):
-    name = "BitbucketServerStatusPush"
+    name: str | None = "BitbucketServerStatusPush"  # type: ignore[assignment]
 
-    def checkConfig(self, base_url, user, password, key=None, statusName=None, verbose=False,
-                    debug=None, verify=None, generators=None, **kwargs):
-
+    def checkConfig(
+        self,
+        base_url,
+        user,
+        password,
+        key=None,
+        statusName=None,
+        verbose=False,
+        debug=None,
+        verify=None,
+        generators=None,
+        **kwargs,
+    ):
         if generators is None:
             generators = self._create_default_generators()
 
         super().checkConfig(generators=generators, **kwargs)
-        httpclientservice.HTTPClientService.checkAvailable(self.__class__.__name__)
 
     @defer.inlineCallbacks
-    def reconfigService(self, base_url, user, password, key=None, statusName=None, verbose=False,
-                        debug=None, verify=None, generators=None, **kwargs):
+    def reconfigService(
+        self,
+        base_url,
+        user,
+        password,
+        key=None,
+        statusName=None,
+        verbose=False,
+        debug=None,
+        verify=None,
+        generators=None,
+        **kwargs,
+    ):
         user, password = yield self.renderSecrets(user, password)
         self.debug = debug
         self.verify = verify
@@ -72,17 +97,22 @@ class BitbucketServerStatusPush(ReporterBase):
 
         self.key = key or Interpolate('%(prop:buildername)s')
         self.context = statusName
-        self._http = yield httpclientservice.HTTPClientService.getService(
-            self.master, base_url, auth=(user, password),
-            debug=self.debug, verify=self.verify)
+        self._http = yield httpclientservice.HTTPSession(
+            self.master.httpservice,
+            base_url,
+            auth=(user, password),
+            debug=self.debug,
+            verify=self.verify,
+        )
 
     def _create_default_generators(self):
         start_formatter = MessageFormatterRenderable('Build started.')
         end_formatter = MessageFormatterRenderable('Build done.')
 
         return [
-            BuildStartEndStatusGenerator(start_formatter=start_formatter,
-                                         end_formatter=end_formatter)
+            BuildStartEndStatusGenerator(
+                start_formatter=start_formatter, end_formatter=end_formatter
+            )
         ]
 
     def createStatus(self, sha, state, url, key, description=None, context=None):
@@ -130,54 +160,73 @@ class BitbucketServerStatusPush(ReporterBase):
 
                 url = build['url']
                 res = yield self.createStatus(
-                    sha=sha,
-                    state=state,
-                    url=url,
-                    key=key,
-                    description=description,
-                    context=context
+                    sha=sha, state=state, url=url, key=key, description=description, context=context
                 )
 
                 if res.code not in (HTTP_PROCESSED,):
                     content = yield res.content()
-                    log.msg(f"{res.code}: Unable to send Bitbucket Server status: "
-                            f"{content}")
+                    log.msg(f"{res.code}: Unable to send Bitbucket Server status: {content}")
                 elif self.verbose:
                     log.msg(f'Status "{state}" sent for {sha}.')
             except Exception as e:
                 log.err(
-                    e,
-                    f"Failed to send status '{state}' for {sourcestamp['repository']} at {sha}")
+                    e, f"Failed to send status '{state}' for {sourcestamp['repository']} at {sha}"
+                )
 
 
 class BitbucketServerCoreAPIStatusPush(ReporterBase):
-    name = "BitbucketServerCoreAPIStatusPush"
+    name: str | None = "BitbucketServerCoreAPIStatusPush"  # type: ignore[assignment]
     secrets = ["token", "auth"]
 
-    def checkConfig(self, base_url, token=None, auth=None,
-                    statusName=None, statusSuffix=None, key=None, parentName=None,
-                    buildNumber=None, ref=None, duration=None,
-                    testResults=None, verbose=False, debug=None, verify=None, generators=None,
-                    **kwargs):
-
+    def checkConfig(
+        self,
+        base_url,
+        token=None,
+        auth=None,
+        statusName=None,
+        statusSuffix=None,
+        key=None,
+        parentName=None,
+        buildNumber=None,
+        ref=None,
+        duration=None,
+        testResults=None,
+        verbose=False,
+        debug=None,
+        verify=None,
+        generators=None,
+        **kwargs,
+    ):
         if generators is None:
             generators = self._create_default_generators()
 
         super().checkConfig(generators=generators, **kwargs)
-        httpclientservice.HTTPClientService.checkAvailable(self.__class__.__name__)
 
         if not base_url:
             config.error("Parameter base_url has to be given")
         if token is not None and auth is not None:
-            config.error("Only one authentication method can be given "
-                         "(token or auth)")
+            config.error("Only one authentication method can be given (token or auth)")
 
     @defer.inlineCallbacks
-    def reconfigService(self, base_url, token=None, auth=None,
-                        statusName=None, statusSuffix=None, key=None, parentName=None,
-                        buildNumber=None, ref=None, duration=None,
-                        testResults=None, verbose=False, debug=None, verify=None, generators=None,
-                        **kwargs):
+    def reconfigService(
+        self,
+        base_url,
+        token=None,
+        auth=None,
+        statusName=None,
+        statusSuffix=None,
+        key=None,
+        parentName=None,
+        buildNumber=None,
+        ref=None,
+        duration=None,
+        testResults=None,
+        verbose=False,
+        debug=None,
+        verify=None,
+        generators=None,
+        **kwargs,
+    ):
         self.status_name = statusName
         self.status_suffix = statusSuffix
         self.key = key or Interpolate('%(prop:buildername)s')
@@ -198,39 +247,58 @@ class BitbucketServerCoreAPIStatusPush(ReporterBase):
         if testResults:
             self.test_results = testResults
         else:
+
             @util.renderer
             def r_testresults(props):
                 failed = props.getProperty("tests_failed", 0)
                 skipped = props.getProperty("tests_skipped", 0)
                 successful = props.getProperty("tests_successful", 0)
                 if any([failed, skipped, successful]):
-                    return {
-                        "failed": failed,
-                        "skipped": skipped,
-                        "successful": successful
-                    }
+                    return {"failed": failed, "skipped": skipped, "successful": successful}
                 return None
+
             self.test_results = r_testresults
 
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        self._http = yield httpclientservice.HTTPClientService.getService(
-            self.master, base_url, auth=auth, headers=headers, debug=debug,
-            verify=verify)
+        self._http = yield httpclientservice.HTTPSession(
+            self.master.httpservice,
+            base_url,
+            auth=auth,
+            headers=headers,
+            debug=debug,
+            verify=verify,
+        )
 
     def _create_default_generators(self):
         start_formatter = MessageFormatterRenderable('Build started.')
         end_formatter = MessageFormatterRenderable('Build done.')
+        pending_formatter = MessageFormatterRenderable('Build pending.')
 
         return [
-            BuildStartEndStatusGenerator(start_formatter=start_formatter,
-                                         end_formatter=end_formatter)
+            BuildRequestGenerator(formatter=pending_formatter),
+            BuildStartEndStatusGenerator(
+                start_formatter=start_formatter, end_formatter=end_formatter
+            ),
         ]
 
-    def createStatus(self, proj_key, repo_slug, sha, state, url, key, parent,
-                     build_number, ref, description, name, duration,
-                     test_results):
+    def createStatus(
+        self,
+        proj_key,
+        repo_slug,
+        sha,
+        state,
+        url,
+        key,
+        parent,
+        build_number,
+        ref,
+        description,
+        name,
+        duration,
+        test_results,
+    ):
         payload = {
             'state': state,
             'url': url,
@@ -241,14 +309,13 @@ class BitbucketServerCoreAPIStatusPush(ReporterBase):
             'description': description,
             'name': name,
             'duration': duration,
-            'testResults': test_results
+            'testResults': test_results,
         }
 
         if self.verbose:
             log.msg(f"Sending payload: '{payload}' for {proj_key}/{repo_slug} {sha}.")
 
-        _url = STATUS_CORE_API_URL.format(proj_key=proj_key, repo_slug=repo_slug,
-                                          sha=sha)
+        _url = STATUS_CORE_API_URL.format(proj_key=proj_key, repo_slug=repo_slug, sha=sha)
         return self._http.post(_url, json=payload)
 
     @defer.inlineCallbacks
@@ -267,16 +334,21 @@ class BitbucketServerCoreAPIStatusPush(ReporterBase):
             state = SUCCESSFUL if build['results'] == SUCCESS else FAILED
             if self.duration:
                 duration = yield props.render(self.duration)
-            else:
-                td = build['complete_at'] - build['started_at']
-                duration = int(td.seconds * 1000)
+            elif "complete_at" in build:
+                complete_at = build['complete_at']
+                started_at = build['started_at']
+                if isinstance(complete_at, datetime.datetime):
+                    complete_at = datetime2epoch(complete_at)
+                if isinstance(started_at, datetime.datetime):
+                    started_at = datetime2epoch(started_at)
+                duration = int(complete_at - started_at) * 1000
             if self.test_results:
                 test_results = yield props.render(self.test_results)
         else:
             state = INPROGRESS
             duration = None
 
-        parent_name = (build['parentbuilder'] or {}).get('name')
+        parent_name = (build.get('parentbuilder') or {}).get('name')
         if self.parent_name:
             parent = yield props.render(self.parent_name)
         elif parent_name:
@@ -287,10 +359,12 @@ class BitbucketServerCoreAPIStatusPush(ReporterBase):
         if self.status_name:
             status_name = yield props.render(self.status_name)
         else:
-            status_name = f'{props.getProperty("buildername")} #{props.getProperty("buildnumber")}'
+            build_identifier = props.getProperty("buildnumber") or "(build request)"
+            status_name = f'{props.getProperty("buildername")} #{build_identifier}'
             if parent_name:
-                status_name = \
-                    f"{parent_name} #{build['parentbuild']['number']} \u00BB {status_name}"
+                status_name = (
+                    f"{parent_name} #{build['parentbuild']['number']} \u00bb {status_name}"
+                )
         if self.status_suffix:
             status_name = status_name + (yield props.render(self.status_suffix))
 
@@ -322,9 +396,11 @@ class BitbucketServerCoreAPIStatusPush(ReporterBase):
                     ref = yield props.render(self.ref)
 
                 if not ref:
-                    log.msg(f"WARNING: Unable to resolve ref for SSID: {ssid}. "
-                            "Build status will not be visible on Builds or "
-                            "PullRequest pages only for commits")
+                    log.msg(
+                        f"WARNING: Unable to resolve ref for SSID: {ssid}. "
+                        "Build status will not be visible on Builds or "
+                        "PullRequest pages only for commits"
+                    )
 
                 r = re.search(r"^.*?/([^/]+)/([^/]+?)(?:\.git)?$", repo or "")
                 if r:
@@ -347,27 +423,36 @@ class BitbucketServerCoreAPIStatusPush(ReporterBase):
                     description=description,
                     name=status_name,
                     duration=duration,
-                    test_results=test_results
+                    test_results=test_results,
                 )
 
                 if res.code not in (HTTP_PROCESSED,):
                     content = yield res.content()
-                    log.msg(f"{res.code}: Unable to send Bitbucket Server status for "
-                            f"{proj_key}/{repo_slug} {sha}: {content}")
+                    log.msg(
+                        f"{res.code}: Unable to send Bitbucket Server status for "
+                        f"{proj_key}/{repo_slug} {sha}: {content}"
+                    )
                 elif self.verbose:
                     log.msg(f'Status "{state}" sent for {proj_key}/{repo_slug} {sha}')
             except Exception as e:
-                log.err(
-                    e,
-                    f'Failed to send status "{state}" for {proj_key}/{repo_slug} {sha}')
+                log.err(e, f'Failed to send status "{state}" for {proj_key}/{repo_slug} {sha}')
 
 
 class BitbucketServerPRCommentPush(ReporterBase):
-    name = "BitbucketServerPRCommentPush"
+    name: str | None = "BitbucketServerPRCommentPush"  # type: ignore[assignment]
 
     @defer.inlineCallbacks
-    def reconfigService(self, base_url, user, password,
-                        verbose=False, debug=None, verify=None, generators=None, **kwargs):
+    def reconfigService(
+        self,
+        base_url,
+        user,
+        password,
+        verbose=False,
+        debug=None,
+        verify=None,
+        generators=None,
+        **kwargs,
+    ):
         user, password = yield self.renderSecrets(user, password)
         self.verbose = verbose
 
@@ -375,18 +460,25 @@ class BitbucketServerPRCommentPush(ReporterBase):
             generators = self._create_default_generators()
 
         yield super().reconfigService(generators=generators, **kwargs)
-        self._http = yield httpclientservice.HTTPClientService.getService(
-            self.master, base_url, auth=(user, password),
-            debug=debug, verify=verify)
+        self._http = yield httpclientservice.HTTPSession(
+            self.master.httpservice, base_url, auth=(user, password), debug=debug, verify=verify
+        )
 
-    def checkConfig(self, base_url, user, password,
-                    verbose=False, debug=None, verify=None, generators=None, **kwargs):
-
+    def checkConfig(
+        self,
+        base_url,
+        user,
+        password,
+        verbose=False,
+        debug=None,
+        verify=None,
+        generators=None,
+        **kwargs,
+    ):
         if generators is None:
             generators = self._create_default_generators()
 
         super().checkConfig(generators=generators, **kwargs)
-        httpclientservice.HTTPClientService.checkAvailable(self.__class__.__name__)
 
     def _create_default_generators(self):
         return [BuildStatusGenerator()]
@@ -394,8 +486,7 @@ class BitbucketServerPRCommentPush(ReporterBase):
     def sendComment(self, pr_url, text):
         path = urlparse(unicode2bytes(pr_url)).path
         payload = {'text': text}
-        return self._http.post(COMMENT_API_URL.format(
-            path=bytes2unicode(path)), json=payload)
+        return self._http.post(COMMENT_API_URL.format(path=bytes2unicode(path)), json=payload)
 
     @defer.inlineCallbacks
     def sendMessage(self, reports):
@@ -411,10 +502,7 @@ class BitbucketServerPRCommentPush(ReporterBase):
             if pr_url is None:
                 continue
             try:
-                res = yield self.sendComment(
-                    pr_url=pr_url,
-                    text=body
-                )
+                res = yield self.sendComment(pr_url=pr_url, text=body)
                 if res.code not in (HTTP_CREATED,):
                     content = yield res.content()
                     log.msg(f"{res.code}: Unable to send a comment: {content}")

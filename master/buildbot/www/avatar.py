@@ -42,15 +42,15 @@ class AvatarGitHub(AvatarBase):
 
     DEFAULT_GITHUB_API_URL = 'https://api.github.com'
 
-    def __init__(self,
-                 github_api_endpoint=None,
-                 token=None,
-                 client_id=None,
-                 client_secret=None,
-                 debug=False,
-                 verify=False):
-        httpclientservice.HTTPClientService.checkAvailable(self.__class__.__name__)
-
+    def __init__(
+        self,
+        github_api_endpoint=None,
+        token=None,
+        client_id=None,
+        client_secret=None,
+        debug=False,
+        verify=True,
+    ):
         self.github_api_endpoint = github_api_endpoint
         if github_api_endpoint is None:
             self.github_api_endpoint = self.DEFAULT_GITHUB_API_URL
@@ -61,9 +61,9 @@ class AvatarGitHub(AvatarBase):
         if client_id:
             if token:
                 config.error('client_id and client_secret must not be provided when token is')
-            self.client_creds = base64.b64encode(b':'.join(
-                cred.encode('utf-8') for cred in (client_id, client_secret)
-            )).decode('ascii')
+            self.client_creds = base64.b64encode(
+                b':'.join(cred.encode('utf-8') for cred in (client_id, client_secret))
+            ).decode('ascii')
         self.debug = debug
         self.verify = verify
 
@@ -83,9 +83,13 @@ class AvatarGitHub(AvatarBase):
         elif self.client_creds:
             headers['Authorization'] = 'basic ' + self.client_creds
 
-        self.client = yield httpclientservice.HTTPClientService.getService(self.master,
-            self.github_api_endpoint, headers=headers,
-            debug=self.debug, verify=self.verify)
+        self.client = yield httpclientservice.HTTPSession(
+            self.master.httpservice,
+            self.github_api_endpoint,
+            headers=headers,
+            debug=self.debug,
+            verify=self.verify,
+        )
 
         return self.client
 
@@ -115,7 +119,7 @@ class AvatarGitHub(AvatarBase):
         }
 
         query = f'{email} in:email'
-        url = f"/search/users?{urlencode({'q': query,})}"
+        url = f"/search/users?{urlencode({'q': query})}"
         http = yield self._get_http_client()
         res = yield http.get(url, headers=headers)
         if 200 <= res.code < 300:
@@ -163,9 +167,14 @@ class AvatarGitHub(AvatarBase):
         if query:
             query += '&'
         query += f's={size}'
-        return urlunparse((parts.scheme,
-            parts.netloc, parts.path, parts.params,
-            query, parts.fragment))
+        return urlunparse((
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            parts.params,
+            query,
+            parts.fragment,
+        ))
 
     @defer.inlineCallbacks
     def getUserAvatar(self, email, username, size, defaultAvatarUrl):
@@ -222,11 +231,12 @@ class AvatarResource(resource.Resource):
     def reconfigResource(self, new_config):
         self.avatarMethods = new_config.www.get('avatar_methods', [])
         self.defaultAvatarFullUrl = urljoin(
-            unicode2bytes(new_config.buildbotURL), unicode2bytes(self.defaultAvatarUrl))
+            unicode2bytes(new_config.buildbotURL), unicode2bytes(self.defaultAvatarUrl)
+        )
         self.cache = {}
         # ensure the avatarMethods is a iterable
         if isinstance(self.avatarMethods, AvatarBase):
-            self.avatarMethods = (self.avatarMethods, )
+            self.avatarMethods = (self.avatarMethods,)
 
         for method in self.avatarMethods:
             method.master = self.master

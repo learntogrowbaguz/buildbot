@@ -22,51 +22,7 @@ from buildbot.steps.worker import CompositeStepMixin
 from buildbot.test.util.integration import RunMasterBase
 
 
-# This integration test creates a master and worker environment,
-# and makes sure the composite step mixin is working.
-class CompositeStepMixinMaster(RunMasterBase):
-
-    @defer.inlineCallbacks
-    def test_compositemixin_rmdir_list(self):
-        yield self.do_compositemixin_test(is_list_mkdir=False, is_list_rmdir=True)
-
-    @defer.inlineCallbacks
-    def test_compositemixin(self):
-        yield self.do_compositemixin_test(is_list_mkdir=False, is_list_rmdir=False)
-
-    @defer.inlineCallbacks
-    def do_compositemixin_test(self, is_list_mkdir, is_list_rmdir):
-        yield self.setupConfig(masterConfig(is_list_mkdir=is_list_mkdir,
-                                            is_list_rmdir=is_list_rmdir))
-
-        change = dict(branch="master",
-                      files=["foo.c"],
-                      author="me@foo.com",
-                      committer="me@foo.com",
-                      comments="good stuff",
-                      revision="HEAD",
-                      project="none"
-                      )
-        build = yield self.doForceBuild(wantSteps=True, useChange=change,
-                                        wantLogs=True)
-        self.assertEqual(build['buildid'], 1)
-        self.assertEqual(build['results'], results.SUCCESS)
-
-
-class CompositeStepMixinMasterPb(CompositeStepMixinMaster):
-    proto = "pb"
-
-
-class CompositeStepMixinMasterMsgPack(CompositeStepMixinMaster):
-    proto = "msgpack"
-
-    @defer.inlineCallbacks
-    def test_compositemixin_mkdir_rmdir_lists(self):
-        yield self.do_compositemixin_test(is_list_mkdir=True, is_list_rmdir=True)
-
-
 class TestCompositeMixinStep(BuildStep, CompositeStepMixin):
-
     def __init__(self, is_list_mkdir, is_list_rmdir):
         super().__init__()
         self.logEnviron = False
@@ -110,7 +66,7 @@ class TestCompositeMixinStep(BuildStep, CompositeStepMixin):
             for path in paths:
                 yield self.runRmdir(path)
 
-        for path in (paths):
+        for path in paths:
             has_path = yield self.pathExists(path)
             if has_path:
                 return results.FAILURE
@@ -118,23 +74,57 @@ class TestCompositeMixinStep(BuildStep, CompositeStepMixin):
         return results.SUCCESS
 
 
-# master configuration
-def masterConfig(is_list_mkdir=True, is_list_rmdir=True):
-    c = {}
-    from buildbot.config import BuilderConfig
-    from buildbot.process.factory import BuildFactory
-    from buildbot.plugins import schedulers
+# This integration test creates a master and worker environment,
+# and makes sure the composite step mixin is working.
+class CompositeStepMixinMaster(RunMasterBase):
+    @defer.inlineCallbacks
+    def setup_config(self, is_list_mkdir=True, is_list_rmdir=True):
+        c = {}
+        from buildbot.config import BuilderConfig
+        from buildbot.plugins import schedulers
+        from buildbot.process.factory import BuildFactory
 
-    c['schedulers'] = [
-        schedulers.AnyBranchScheduler(
-            name="sched",
-            builderNames=["testy"])]
+        c['schedulers'] = [schedulers.AnyBranchScheduler(name="sched", builderNames=["testy"])]
 
-    f = BuildFactory()
-    f.addStep(TestCompositeMixinStep(is_list_mkdir=is_list_mkdir,
-                                     is_list_rmdir=is_list_rmdir))
-    c['builders'] = [
-        BuilderConfig(name="testy",
-                      workernames=["local1"],
-                      factory=f)]
-    return c
+        f = BuildFactory()
+        f.addStep(TestCompositeMixinStep(is_list_mkdir=is_list_mkdir, is_list_rmdir=is_list_rmdir))
+        c['builders'] = [BuilderConfig(name="testy", workernames=["local1"], factory=f)]
+
+        yield self.setup_master(c)
+
+    @defer.inlineCallbacks
+    def test_compositemixin_rmdir_list(self):
+        yield self.do_compositemixin_test(is_list_mkdir=False, is_list_rmdir=True)
+
+    @defer.inlineCallbacks
+    def test_compositemixin(self):
+        yield self.do_compositemixin_test(is_list_mkdir=False, is_list_rmdir=False)
+
+    @defer.inlineCallbacks
+    def do_compositemixin_test(self, is_list_mkdir, is_list_rmdir):
+        yield self.setup_config(is_list_mkdir=is_list_mkdir, is_list_rmdir=is_list_rmdir)
+
+        change = {
+            "branch": "master",
+            "files": ["foo.c"],
+            "author": "me@foo.com",
+            "committer": "me@foo.com",
+            "comments": "good stuff",
+            "revision": "HEAD",
+            "project": "none",
+        }
+        build = yield self.doForceBuild(wantSteps=True, useChange=change, wantLogs=True)
+        self.assertEqual(build['buildid'], 1)
+        self.assertEqual(build['results'], results.SUCCESS)
+
+
+class CompositeStepMixinMasterPb(CompositeStepMixinMaster):
+    proto = "pb"
+
+
+class CompositeStepMixinMasterMsgPack(CompositeStepMixinMaster):
+    proto = "msgpack"
+
+    @defer.inlineCallbacks
+    def test_compositemixin_mkdir_rmdir_lists(self):
+        yield self.do_compositemixin_test(is_list_mkdir=True, is_list_rmdir=True)

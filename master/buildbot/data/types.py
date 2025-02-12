@@ -14,6 +14,8 @@
 # Copyright Buildbot Team Members
 
 # See "Type Validation" in master/docs/developer/tests.rst
+from __future__ import annotations
+
 import datetime
 import json
 import re
@@ -27,9 +29,8 @@ def capitalize(word):
 
 
 class Type:
-
-    name = None
-    doc = None
+    name: Identifier | String | str | None = None
+    doc: str | None = None
     graphQLType = "unknown"
 
     @property
@@ -55,7 +56,7 @@ class Type:
         raise NotImplementedError
 
     def getSpec(self):
-        r = dict(name=self.name)
+        r = {"name": self.name}
         if self.doc is not None:
             r["doc"] = self.doc
         return r
@@ -74,7 +75,6 @@ class Type:
 
 
 class NoneOk(Type):
-
     def __init__(self, nestedType):
         assert isinstance(nestedType, Type)
         self.nestedType = nestedType
@@ -93,8 +93,7 @@ class NoneOk(Type):
     def validate(self, name, object):
         if object is None:
             return
-        for msg in self.nestedType.validate(name, object):
-            yield msg
+        yield from self.nestedType.validate(name, object)
 
     def getSpec(self):
         r = self.nestedType.getSpec()
@@ -104,22 +103,9 @@ class NoneOk(Type):
     def toRaml(self):
         return self.nestedType.toRaml()
 
-    def toGraphQL(self):
-        # remove trailing !
-        if isinstance(self.nestedType, Entity):
-            return self.nestedType.graphql_name
-        return self.nestedType.toGraphQL()[:-1]
-
-    def graphQLDependentTypes(self):
-        return [self.nestedType]
-
-    def getGraphQLInputType(self):
-        return self.nestedType.getGraphQLInputType()
-
 
 class Instance(Type):
-
-    types = ()
+    types: tuple[type, ...] = ()
     ramlType = "unknown"
     graphQLType = "unknown"
 
@@ -129,7 +115,7 @@ class Instance(Type):
 
     def validate(self, name, object):
         if not isinstance(object, self.types):
-            yield f"{name} ({repr(object)}) is not a {self.name or repr(self.types)}"
+            yield f"{name} ({object!r}) is not a {self.name or repr(self.types)}"
 
     def toRaml(self):
         return self.ramlType
@@ -139,7 +125,6 @@ class Instance(Type):
 
 
 class Integer(Instance):
-
     name = "integer"
     types = (int,)
     ramlType = "integer"
@@ -150,7 +135,6 @@ class Integer(Instance):
 
 
 class DateTime(Instance):
-
     name = "datetime"
     types = (datetime.datetime,)
     ramlType = "date"
@@ -173,7 +157,6 @@ class DateTime(Instance):
 
 
 class String(Instance):
-
     name = "string"
     types = (str,)
     ramlType = "string"
@@ -185,7 +168,6 @@ class String(Instance):
 
 
 class Binary(Instance):
-
     name = "binary"
     types = (bytes,)
     ramlType = "string"
@@ -196,7 +178,6 @@ class Binary(Instance):
 
 
 class Boolean(Instance):
-
     name = "boolean"
     types = (bool,)
     ramlType = "boolean"
@@ -207,7 +188,6 @@ class Boolean(Instance):
 
 
 class Identifier(Type):
-
     name = "identifier"
     identRe = re.compile('^[a-zA-Z_-][a-zA-Z0-9._-]*$')
     ramlType = "string"
@@ -225,21 +205,19 @@ class Identifier(Type):
 
     def validate(self, name, object):
         if not isinstance(object, str):
-            yield f"{name} - {repr(object)} - is not a unicode string"
+            yield f"{name} - {object!r} - is not a unicode string"
         elif not self.identRe.match(object):
-            yield f"{name} - {repr(object)} - is not an identifier"
+            yield f"{name} - {object!r} - is not an identifier"
         elif not object:
             yield f"{name} - identifiers cannot be an empty string"
         elif len(object) > self.len:
-            yield f"{name} - {repr(object)} - is longer than {self.len} characters"
+            yield f"{name} - {object!r} - is longer than {self.len} characters"
 
     def toRaml(self):
-        return {'type': self.ramlType,
-                'pattern': self.identRe.pattern}
+        return {'type': self.ramlType, 'pattern': self.identRe.pattern}
 
 
 class List(Type):
-
     name = "list"
     ramlType = "list"
 
@@ -253,12 +231,11 @@ class List(Type):
 
     def validate(self, name, object):
         if not isinstance(object, list):  # we want a list, and NOT a subclass
-            yield f"{name} ({repr(object)}) is not a {self.name}"
+            yield f"{name} ({object!r}) is not a {self.name}"
             return
 
         for idx, elt in enumerate(object):
-            for msg in self.of.validate(f"{name}[{idx}]", elt):
-                yield msg
+            yield from self.of.validate(f"{name}[{idx}]", elt)
 
     def valueFromString(self, arg):
         # valueFromString is used to process URL args, which come one at
@@ -266,8 +243,7 @@ class List(Type):
         return self.of.valueFromString(arg)
 
     def getSpec(self):
-        return dict(type=self.name,
-                    of=self.of.getSpec())
+        return {"type": self.name, "of": self.of.getSpec()}
 
     def toRaml(self):
         return {'type': 'array', 'items': self.of.name}
@@ -294,7 +270,6 @@ def ramlMaybeNoneOrList(k, v):
 
 
 class SourcedProperties(Type):
-
     name = "sourcedproperties"
 
     def validate(self, name, object):
@@ -303,27 +278,28 @@ class SourcedProperties(Type):
             return
         for k, v in object.items():
             if not isinstance(k, str):
-                yield f"{name} property name {repr(k)} is not unicode"
+                yield f"{name} property name {k!r} is not unicode"
             if not isinstance(v, tuple) or len(v) != 2:
                 yield f"{name} property value for '{k}' is not a 2-tuple"
                 return
             propval, propsrc = v
             if not isinstance(propsrc, str):
-                yield f"{name}[{k}] source {repr(propsrc)} is not unicode"
+                yield f"{name}[{k}] source {propsrc!r} is not unicode"
             try:
                 json.loads(bytes2unicode(propval))
             except ValueError:
-                yield f"{name}[{repr(k)}] value is not JSON-able"
+                yield f"{name}[{k!r}] value is not JSON-able"
 
     def toRaml(self):
-        return {'type': "object",
-                'properties':
-                {'[]': {'type': 'object',
-                        'properties': {
-                            1: 'string',
-                            2: 'integer | string | object | array | boolean'
-                        }
-                        }}}
+        return {
+            'type': "object",
+            'properties': {
+                '[]': {
+                    'type': 'object',
+                    'properties': {1: 'string', 2: 'integer | string | object | array | boolean'},
+                }
+            },
+        }
 
     def toGraphQL(self):
         return "[Property]!"
@@ -342,7 +318,7 @@ class JsonObject(Type):
 
     def validate(self, name, object):
         if not isinstance(object, dict):
-            yield f"{name} ({repr(object)}) is not a dictionary (got type {type(object)})"
+            yield f"{name} ({object!r}) is not a dictionary (got type {type(object)})"
             return
 
         # make sure JSON can represent it
@@ -357,18 +333,16 @@ class JsonObject(Type):
 
 
 class Entity(Type):
-
     # NOTE: this type is defined by subclassing it in each resource type class.
     # Instances are generally accessed at e.g.,
     #  * buildsets.Buildset.entityType or
     #  * self.master.data.rtypes.buildsets.entityType
 
-    name = None  # set in constructor
-    graphql_name = None  # set in constructor
-    fields = {}
-    fieldNames = set([])
+    name: Identifier | String | str | None = None  # set in constructor
+    fields: dict[str, Type] = {}
+    fieldNames: set[str] = set([])
 
-    def __init__(self, name, graphql_name):
+    def __init__(self, name):
         fields = {}
         for k, v in self.__class__.__dict__.items():
             if isinstance(v, Type):
@@ -376,12 +350,11 @@ class Entity(Type):
         self.fields = fields
         self.fieldNames = set(fields)
         self.name = name
-        self.graphql_name = graphql_name
 
     def validate(self, name, object):
         # this uses isinstance, allowing dict subclasses as used by the DB API
         if not isinstance(object, dict):
-            yield f"{name} ({repr(object)}) is not a dictionary (got type {type(object)})"
+            yield f"{name} ({object!r}) is not a dictionary (got type {type(object)})"
             return
 
         gotNames = set(object.keys())
@@ -396,43 +369,25 @@ class Entity(Type):
 
         for k in gotNames & self.fieldNames:
             f = self.fields[k]
-            for msg in f.validate(f"{name}[{repr(k)}]", object[k]):
-                yield msg
+            yield from f.validate(f"{name}[{k!r}]", object[k])
 
     def getSpec(self):
-        return dict(type=self.name,
-                    fields=[dict(name=k,
-                                 type=v.name,
-                                 type_spec=v.getSpec())
-                            for k, v in self.fields.items()
-                            ])
+        return {
+            "type": self.name,
+            "fields": [
+                {"name": k, "type": v.name, "type_spec": v.getSpec()}
+                for k, v in self.fields.items()
+            ],
+        }
 
     def toRaml(self):
-        return {'type': "object",
-                'properties': {
-                    ramlMaybeNoneOrList(k, v): {'type': v.ramlname, 'description': ''}
-                    for k, v in self.fields.items()}}
-
-    def toGraphQL(self):
-        return dict(type=self.graphql_name,
-                    fields=[dict(name=k,
-                                 type=v.toGraphQL())
-                            for k, v in self.fields.items()
-                            # in graphql, we handle properties as queriable sub resources
-                            # instead of hardcoded attributes like in rest api
-                            if k != "properties"
-                            ])
-
-    def toGraphQLTypeName(self):
-        return self.graphql_name
-
-    def graphQLDependentTypes(self):
-        return self.fields.values()
-
-    def getGraphQLInputType(self):
-        # for now, complex types are not query able
-        # in the future, we may want to declare (and implement) graphql input types
-        return None
+        return {
+            'type': "object",
+            'properties': {
+                ramlMaybeNoneOrList(k, v): {'type': v.ramlname, 'description': ''}
+                for k, v in self.fields.items()
+            },
+        }
 
 
 class PropertyEntityType(Entity):

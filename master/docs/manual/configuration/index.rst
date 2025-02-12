@@ -18,6 +18,8 @@ The next section, :doc:`../customization`, describes this approach, with frequen
     schedulers
     workers
     builders
+    projects
+    codebases
     buildfactories
     buildsets
     properties

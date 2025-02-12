@@ -21,8 +21,7 @@
 
 import contextlib
 import functools
-
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 
@@ -50,7 +49,7 @@ def _get_target(target):
     try:
         target, attribute = target.rsplit('.', 1)
     except (TypeError, ValueError) as e:
-        raise TypeError(f"Need a valid target to patch. You supplied: {repr(target)}") from e
+        raise TypeError(f"Need a valid target to patch. You supplied: {target!r}") from e
     return _importer(target), attribute
 
 
@@ -77,15 +76,16 @@ class DelayWrapper:
 def patchForDelay(target_name):
     class Default:
         pass
+
     default = Default()
 
     target, attribute = _get_target(target_name)
     original = getattr(target, attribute, default)
 
     if original is default:
-        raise Exception(f'Could not find name {target_name}')
+        raise RuntimeError(f'Could not find name {target_name}')
     if not callable(original):
-        raise Exception(f'{target_name} is not callable')
+        raise RuntimeError(f'{target_name} is not callable')
 
     delay = DelayWrapper()
 

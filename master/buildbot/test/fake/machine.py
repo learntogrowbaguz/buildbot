@@ -12,6 +12,7 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
+from __future__ import annotations
 
 from twisted.internet import defer
 
@@ -21,7 +22,7 @@ from buildbot.util import service
 
 
 class FakeMachineManager(service.AsyncMultiService):
-    name = 'MachineManager'
+    name: str | None = 'MachineManager'  # type: ignore
 
     @property
     def machines(self):
@@ -34,8 +35,7 @@ class FakeMachineManager(service.AsyncMultiService):
 
 
 class LatentMachineController:
-    """ A controller for ``ControllableLatentMachine``
-    """
+    """A controller for ``ControllableLatentMachine``"""
 
     def __init__(self, name, **kwargs):
         self.machine = ControllableLatentMachine(name, self, **kwargs)
@@ -44,7 +44,8 @@ class LatentMachineController:
 
     def start_machine(self, result):
         assert self.machine.state == MachineStates.STARTING
-        d, self._start_deferred = self._start_deferred, None
+        d = self._start_deferred
+        self._start_deferred = None
         if isinstance(result, Exception):
             d.errback(result)
         else:
@@ -52,7 +53,8 @@ class LatentMachineController:
 
     def stop_machine(self, result=True):
         assert self.machine.state == MachineStates.STOPPING
-        d, self._stop_deferred = self._stop_deferred, None
+        d = self._stop_deferred
+        self._stop_deferred = None
         if isinstance(result, Exception):
             d.errback(result)
         else:
@@ -60,8 +62,8 @@ class LatentMachineController:
 
 
 class ControllableLatentMachine(AbstractLatentMachine):
-    """ A latent machine that can be controlled by tests
-    """
+    """A latent machine that can be controlled by tests"""
+
     def __init__(self, name, controller, **kwargs):
         self._controller = controller
         super().__init__(name, **kwargs)

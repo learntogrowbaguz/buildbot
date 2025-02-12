@@ -30,9 +30,9 @@ from buildbot.test.util.config import ConfigErrorsMixin
 from buildbot.test.util.reporter import ReporterTestMixin
 
 
-class TestGitHubStatusPush(TestReactorMixin, unittest.TestCase, ConfigErrorsMixin,
-                           ReporterTestMixin):
-
+class TestGitHubStatusPush(
+    TestReactorMixin, unittest.TestCase, ConfigErrorsMixin, ReporterTestMixin
+):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
@@ -41,48 +41,61 @@ class TestGitHubStatusPush(TestReactorMixin, unittest.TestCase, ConfigErrorsMixi
         # project must be in the form <owner>/<project>
         self.reporter_test_project = 'buildbot/buildbot'
 
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True,
-                                             wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
 
         yield self.master.startService()
+        self.addCleanup(self.master.stopService)
+
         self._http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.master, self,
-            HOSTED_BASE_URL, headers={
-                'Authorization': 'token XXYYZZ',
-                'User-Agent': 'Buildbot'
-            },
-            debug=None, verify=None)
+            self.master,
+            self,
+            HOSTED_BASE_URL,
+            headers={'User-Agent': 'Buildbot'},
+            debug=None,
+            verify=None,
+        )
         self.sp = self.createService()
         yield self.sp.setServiceParent(self.master)
 
     def createService(self):
         return GitHubStatusPush(Interpolate('XXYYZZ'))
 
-    def tearDown(self):
-        return self.master.stopService()
-
     @defer.inlineCallbacks
     def test_basic(self):
         build = yield self.insert_build_new()
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/repos/buildbot/buildbot/statuses/d34db33fd43db33f',
-            json={'state': 'pending',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build started.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'pending',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build started.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/buildbot/buildbot/statuses/d34db33fd43db33f',
-            json={'state': 'success',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'success',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/buildbot/buildbot/statuses/d34db33fd43db33f',
-            json={'state': 'failure',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'failure',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
 
         build['complete'] = False
         build['results'] = None
@@ -107,17 +120,26 @@ class TestGitHubStatusPush(TestReactorMixin, unittest.TestCase, ConfigErrorsMixi
     def test_source_stamp_no_props_nightly_scheduler(self):
         # no status updates are expected
 
-        self.master.db.insertTestData([
+        yield self.master.db.insert_test_data([
             fakedb.Master(id=92),
             fakedb.Worker(id=13, name='wrk'),
             fakedb.Builder(id=79, name='Builder0'),
             fakedb.Buildset(id=98, results=SUCCESS, reason="test_reason1"),
             fakedb.BuildsetSourceStamp(buildsetid=98, sourcestampid=234),
-            fakedb.SourceStamp(id=234, project=None, branch=None, revision=None,
-                               repository=None, codebase=None),
+            fakedb.SourceStamp(
+                id=234, project='', branch=None, revision=None, repository='repo', codebase='cb'
+            ),
             fakedb.BuildRequest(id=11, buildsetid=98, builderid=79),
-            fakedb.Build(id=20, number=0, builderid=79, buildrequestid=11,
-                         workerid=13, masterid=92, results=SUCCESS, state_string="build_text"),
+            fakedb.Build(
+                id=20,
+                number=0,
+                builderid=79,
+                buildrequestid=11,
+                workerid=13,
+                masterid=92,
+                results=SUCCESS,
+                state_string="build_text",
+            ),
             fakedb.BuildProperty(buildid=20, name="workername", value="wrk"),
             fakedb.BuildProperty(buildid=20, name="reason", value="because"),
             fakedb.BuildProperty(buildid=20, name="buildername", value="Builder0"),
@@ -150,43 +172,73 @@ class TestGitHubStatusPush(TestReactorMixin, unittest.TestCase, ConfigErrorsMixi
         self._http.expect(
             'post',
             '/repos/test_user/test_project/statuses/rev1',
-            json={'state': 'pending',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build started.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'pending',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build started.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/test_user/test_project/statuses/rev3',
-            json={'state': 'pending',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build started.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'pending',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build started.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/test_user/test_project/statuses/rev1',
-            json={'state': 'success',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'success',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/test_user/test_project/statuses/rev3',
-            json={'state': 'success',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'success',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/test_user/test_project/statuses/rev1',
-            json={'state': 'success',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'success',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/test_user/test_project/statuses/rev3',
-            json={'state': 'success',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'success',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
 
         # note that the first sourcestamp only has revision, second only branch and only the third
         # has both
-        self.master.db.insertTestData([
+        yield self.master.db.insert_test_data([
             fakedb.Master(id=92),
             fakedb.Worker(id=13, name='wrk'),
             fakedb.Builder(id=79, name='Builder0'),
@@ -194,15 +246,41 @@ class TestGitHubStatusPush(TestReactorMixin, unittest.TestCase, ConfigErrorsMixi
             fakedb.BuildsetSourceStamp(buildsetid=98, sourcestampid=234),
             fakedb.BuildsetSourceStamp(buildsetid=98, sourcestampid=235),
             fakedb.BuildsetSourceStamp(buildsetid=98, sourcestampid=236),
-            fakedb.SourceStamp(id=234, project=project, branch=None, revision='rev1',
-                               repository=repository, codebase=codebase1),
-            fakedb.SourceStamp(id=235, project=project, branch='branch2', revision=None,
-                               repository=repository, codebase=codebase2),
-            fakedb.SourceStamp(id=236, project=project, branch='branch3', revision='rev3',
-                               repository=repository, codebase=codebase3),
+            fakedb.SourceStamp(
+                id=234,
+                project=project,
+                branch=None,
+                revision='rev1',
+                repository=repository,
+                codebase=codebase1,
+            ),
+            fakedb.SourceStamp(
+                id=235,
+                project=project,
+                branch='branch2',
+                revision=None,
+                repository=repository,
+                codebase=codebase2,
+            ),
+            fakedb.SourceStamp(
+                id=236,
+                project=project,
+                branch='branch3',
+                revision='rev3',
+                repository=repository,
+                codebase=codebase3,
+            ),
             fakedb.BuildRequest(id=11, buildsetid=98, builderid=79),
-            fakedb.Build(id=20, number=0, builderid=79, buildrequestid=11,
-                         workerid=13, masterid=92, results=SUCCESS, state_string="build_text"),
+            fakedb.Build(
+                id=20,
+                number=0,
+                builderid=79,
+                buildrequestid=11,
+                workerid=13,
+                masterid=92,
+                results=SUCCESS,
+                state_string="build_text",
+            ),
             fakedb.BuildProperty(buildid=20, name="buildername", value="Builder0"),
         ])
 
@@ -218,9 +296,7 @@ class TestGitHubStatusPush(TestReactorMixin, unittest.TestCase, ConfigErrorsMixi
         yield self.sp._got_event(('builds', 20, 'finished'), build)
 
 
-class TestGitHubStatusPushURL(TestReactorMixin, unittest.TestCase,
-                              ReporterTestMixin):
-
+class TestGitHubStatusPushURL(TestReactorMixin, unittest.TestCase, ReporterTestMixin):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
@@ -230,50 +306,63 @@ class TestGitHubStatusPushURL(TestReactorMixin, unittest.TestCase,
         self.reporter_test_project = 'buildbot'
         self.reporter_test_repo = 'https://github.com/buildbot1/buildbot1.git'
 
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True,
-                                             wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
 
         yield self.master.startService()
+        self.addCleanup(self.master.stopService)
+
         self._http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.master, self,
-            HOSTED_BASE_URL, headers={
-                'Authorization': 'token XXYYZZ',
-                'User-Agent': 'Buildbot'
-            },
-            debug=None, verify=None)
+            self.master,
+            self,
+            HOSTED_BASE_URL,
+            headers={'User-Agent': 'Buildbot'},
+            debug=None,
+            verify=None,
+        )
         self.sp = self.createService()
         yield self.sp.setServiceParent(self.master)
 
     def createService(self):
         return GitHubStatusPush('XXYYZZ')
 
-    def tearDown(self):
-        return self.master.stopService()
-
     @defer.inlineCallbacks
     def test_ssh(self):
         self.reporter_test_repo = 'git@github.com:buildbot2/buildbot2.git'
 
         build = yield self.insert_build_new()
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/repos/buildbot2/buildbot2/statuses/d34db33fd43db33f',
-            json={'state': 'pending',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build started.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'pending',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build started.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/buildbot2/buildbot2/statuses/d34db33fd43db33f',
-            json={'state': 'success',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'success',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/buildbot2/buildbot2/statuses/d34db33fd43db33f',
-            json={'state': 'failure',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'failure',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
 
         yield self.sp._got_event(('builds', 20, 'new'), build)
         build['complete'] = True
@@ -285,25 +374,39 @@ class TestGitHubStatusPushURL(TestReactorMixin, unittest.TestCase,
     @defer.inlineCallbacks
     def test_https(self):
         build = yield self.insert_build_new()
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/repos/buildbot1/buildbot1/statuses/d34db33fd43db33f',
-            json={'state': 'pending',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build started.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'pending',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build started.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/buildbot1/buildbot1/statuses/d34db33fd43db33f',
-            json={'state': 'success',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'success',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/buildbot1/buildbot1/statuses/d34db33fd43db33f',
-            json={'state': 'failure',
-                  'target_url': 'http://localhost:8080/#builders/79/builds/0',
-                  'description': 'Build done.', 'context': 'buildbot/Builder0'})
+            json={
+                'state': 'failure',
+                'target_url': 'http://localhost:8080/#/builders/79/builds/0',
+                'description': 'Build done.',
+                'context': 'buildbot/Builder0',
+            },
+            headers={'Authorization': 'token XXYYZZ'},
+        )
 
         yield self.sp._got_event(('builds', 20, 'new'), build)
         build['complete'] = True
@@ -314,22 +417,24 @@ class TestGitHubStatusPushURL(TestReactorMixin, unittest.TestCase,
 
 
 class TestGitHubCommentPush(TestGitHubStatusPush):
-
     def createService(self):
         return GitHubCommentPush('XXYYZZ')
 
     @defer.inlineCallbacks
     def test_basic(self):
         build = yield self.insert_build_new()
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/repos/buildbot/buildbot/issues/34/comments',
-            json={'body': 'Build done.'})
+            json={'body': 'Build done.'},
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/buildbot/buildbot/issues/34/comments',
-            json={'body': 'Build done.'})
+            json={'body': 'Build done.'},
+            headers={'Authorization': 'token XXYYZZ'},
+        )
 
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
@@ -353,15 +458,18 @@ class TestGitHubCommentPush(TestGitHubStatusPush):
     def test_basic_branch_head(self):
         self.reporter_test_props['branch'] = 'refs/pull/13/head'
         build = yield self.insert_build_new()
-        # we make sure proper calls to txrequests have been made
         self._http.expect(
             'post',
             '/repos/buildbot/buildbot/issues/13/comments',
-            json={'body': 'Build done.'})
+            json={'body': 'Build done.'},
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/buildbot/buildbot/issues/13/comments',
-            json={'body': 'Build done.'})
+            json={'body': 'Build done.'},
+            headers={'Authorization': 'token XXYYZZ'},
+        )
 
         build['complete'] = False
         yield self.sp._got_event(('builds', 20, 'new'), build)
@@ -384,23 +492,31 @@ class TestGitHubCommentPush(TestGitHubStatusPush):
         self._http.expect(
             'post',
             '/repos/test_user/test_project/issues/4192/comments',
-            json={'body': 'Build done.'})
+            json={'body': 'Build done.'},
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/test_user/test_project/issues/4192/comments',
-            json={'body': 'Build done.'})
+            json={'body': 'Build done.'},
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/test_user/test_project/issues/4192/comments',
-            json={'body': 'Build done.'})
+            json={'body': 'Build done.'},
+            headers={'Authorization': 'token XXYYZZ'},
+        )
         self._http.expect(
             'post',
             '/repos/test_user/test_project/issues/4192/comments',
-            json={'body': 'Build done.'})
+            json={'body': 'Build done.'},
+            headers={'Authorization': 'token XXYYZZ'},
+        )
 
         # note that the first sourcestamp only has revision, second only branch and only the third
         # has both
-        self.master.db.insertTestData([
+        yield self.master.db.insert_test_data([
             fakedb.Master(id=92),
             fakedb.Worker(id=13, name='wrk'),
             fakedb.Builder(id=79, name='Builder0'),
@@ -408,15 +524,41 @@ class TestGitHubCommentPush(TestGitHubStatusPush):
             fakedb.BuildsetSourceStamp(buildsetid=98, sourcestampid=234),
             fakedb.BuildsetSourceStamp(buildsetid=98, sourcestampid=235),
             fakedb.BuildsetSourceStamp(buildsetid=98, sourcestampid=236),
-            fakedb.SourceStamp(id=234, project=project, branch=None, revision='rev1',
-                               repository=repository, codebase=codebase1),
-            fakedb.SourceStamp(id=235, project=project, branch=branch2, revision=None,
-                               repository=repository, codebase=codebase2),
-            fakedb.SourceStamp(id=236, project=project, branch=branch3, revision='rev3',
-                               repository=repository, codebase=codebase3),
+            fakedb.SourceStamp(
+                id=234,
+                project=project,
+                branch=None,
+                revision='rev1',
+                repository=repository,
+                codebase=codebase1,
+            ),
+            fakedb.SourceStamp(
+                id=235,
+                project=project,
+                branch=branch2,
+                revision=None,
+                repository=repository,
+                codebase=codebase2,
+            ),
+            fakedb.SourceStamp(
+                id=236,
+                project=project,
+                branch=branch3,
+                revision='rev3',
+                repository=repository,
+                codebase=codebase3,
+            ),
             fakedb.BuildRequest(id=11, buildsetid=98, builderid=79),
-            fakedb.Build(id=20, number=0, builderid=79, buildrequestid=11,
-                         workerid=13, masterid=92, results=SUCCESS, state_string="build_text"),
+            fakedb.Build(
+                id=20,
+                number=0,
+                builderid=79,
+                buildrequestid=11,
+                workerid=13,
+                masterid=92,
+                results=SUCCESS,
+                state_string="build_text",
+            ),
             fakedb.BuildProperty(buildid=20, name="buildername", value="Builder0"),
             fakedb.BuildProperty(buildid=20, name="branch", value=branch2),
         ])

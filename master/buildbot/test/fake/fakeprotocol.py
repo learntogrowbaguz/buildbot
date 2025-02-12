@@ -12,7 +12,9 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
+from __future__ import annotations
 
+from typing import Any
 
 from twisted.internet import defer
 
@@ -20,8 +22,7 @@ from buildbot.worker.protocols import base
 
 
 class FakeTrivialConnection(base.Connection):
-
-    info = {}
+    info: dict[str, Any] = {}
 
     def __init__(self):
         super().__init__("Fake")
@@ -34,7 +35,6 @@ class FakeTrivialConnection(base.Connection):
 
 
 class FakeConnection(base.Connection):
-
     def __init__(self, worker):
         super().__init__(worker.workername)
         self._connected = True
@@ -66,8 +66,14 @@ class FakeConnection(base.Connection):
         return defer.succeed(None)
 
     def remoteStartCommand(self, remoteCommand, builderName, commandId, commandName, args):
-        self.remoteCalls.append(('remoteStartCommand', remoteCommand, builderName,
-                                 commandId, commandName, args))
+        self.remoteCalls.append((
+            'remoteStartCommand',
+            remoteCommand,
+            builderName,
+            commandId,
+            commandName,
+            args,
+        ))
         return defer.succeed(None)
 
     def remoteShutdown(self):
@@ -79,8 +85,7 @@ class FakeConnection(base.Connection):
         return defer.succeed(None)
 
     def remoteInterruptCommand(self, builderName, commandId, why):
-        self.remoteCalls.append(
-            ('remoteInterruptCommand', builderName, commandId, why))
+        self.remoteCalls.append(('remoteInterruptCommand', builderName, commandId, why))
         return defer.succeed(None)
 
     def get_peer(self):

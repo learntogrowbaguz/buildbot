@@ -13,7 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
@@ -26,7 +26,6 @@ from buildbot.util import service
 
 
 class FakeMQ(service.ReconfigurableServiceMixin, base.MQBase):
-
     new_config = "not_called"
 
     def reconfigServiceWithBuildbotConfig(self, new_config):
@@ -41,20 +40,22 @@ class FakeMQ(service.ReconfigurableServiceMixin, base.MQBase):
 
 
 class MQConnector(TestReactorMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         self.mqconfig = self.master.config.mq = {}
         self.conn = connector.MQConnector()
         yield self.conn.setServiceParent(self.master)
 
     def patchFakeMQ(self, name='fake'):
-        self.patch(connector.MQConnector, 'classes',
-                   {name:
-                    {'class': 'buildbot.test.unit.test_mq_connector.FakeMQ'},
-                    })
+        self.patch(
+            connector.MQConnector,
+            'classes',
+            {
+                name: {'class': 'buildbot.test.unit.test_mq_connector.FakeMQ'},
+            },
+        )
 
     @defer.inlineCallbacks
     def test_setup_unknown_type(self):
@@ -69,8 +70,7 @@ class MQConnector(TestReactorMixin, unittest.TestCase):
         yield self.conn.setup()
         self.assertIsInstance(self.conn.impl, FakeMQ)
         self.assertEqual(self.conn.impl.produce, self.conn.produce)
-        self.assertEqual(self.conn.impl.startConsuming,
-                         self.conn.startConsuming)
+        self.assertEqual(self.conn.impl.startConsuming, self.conn.startConsuming)
 
     @defer.inlineCallbacks
     def test_reconfigServiceWithBuildbotConfig(self):
@@ -78,7 +78,7 @@ class MQConnector(TestReactorMixin, unittest.TestCase):
         self.mqconfig['type'] = 'fake'
         self.conn.setup()
         new_config = mock.Mock()
-        new_config.mq = dict(type='fake')
+        new_config.mq = {"type": 'fake'}
         yield self.conn.reconfigServiceWithBuildbotConfig(new_config)
 
         self.assertIdentical(self.conn.impl.new_config, new_config)
@@ -89,7 +89,7 @@ class MQConnector(TestReactorMixin, unittest.TestCase):
         self.mqconfig['type'] = 'fake'
         yield self.conn.setup()
         new_config = mock.Mock()
-        new_config.mq = dict(type='other')
+        new_config.mq = {"type": 'other'}
         try:
             yield self.conn.reconfigServiceWithBuildbotConfig(new_config)
         except AssertionError:

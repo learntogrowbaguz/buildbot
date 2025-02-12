@@ -25,21 +25,34 @@ from buildbot.test.util.integration import RunMasterBase
 # This integration test creates a master and worker environment,
 # and makes sure the command mixin is working.
 class CommandMixinMaster(RunMasterBase):
+    @defer.inlineCallbacks
+    def setup_config(self):
+        c = {}
+        from buildbot.config import BuilderConfig
+        from buildbot.plugins import schedulers
+        from buildbot.process.factory import BuildFactory
+
+        c['schedulers'] = [schedulers.AnyBranchScheduler(name="sched", builderNames=["testy"])]
+
+        f = BuildFactory()
+        f.addStep(TestCommandMixinStep())
+        c['builders'] = [BuilderConfig(name="testy", workernames=["local1"], factory=f)]
+        yield self.setup_master(c)
 
     @defer.inlineCallbacks
     def test_commandmixin(self):
-        yield self.setupConfig(masterConfig())
+        yield self.setup_config()
 
-        change = dict(branch="master",
-                      files=["foo.c"],
-                      author="me@foo.com",
-                      committer="me@foo.com",
-                      comments="good stuff",
-                      revision="HEAD",
-                      project="none"
-                      )
-        build = yield self.doForceBuild(wantSteps=True, useChange=change,
-                                        wantLogs=True)
+        change = {
+            "branch": "master",
+            "files": ["foo.c"],
+            "author": "me@foo.com",
+            "committer": "me@foo.com",
+            "comments": "good stuff",
+            "revision": "HEAD",
+            "project": "none",
+        }
+        build = yield self.doForceBuild(wantSteps=True, useChange=change, wantLogs=True)
         self.assertEqual(build['buildid'], 1)
         self.assertEqual(build['results'], results.SUCCESS)
 
@@ -53,7 +66,6 @@ class CommandMixinMasterMsgPack(CommandMixinMaster):
 
 
 class TestCommandMixinStep(BuildStep, CommandMixin):
-
     @defer.inlineCallbacks
     def run(self):
         contents = yield self.runGlob('*')
@@ -81,24 +93,3 @@ class TestCommandMixinStep(BuildStep, CommandMixin):
             return results.FAILURE
 
         return results.SUCCESS
-
-
-# master configuration
-def masterConfig():
-    c = {}
-    from buildbot.config import BuilderConfig
-    from buildbot.process.factory import BuildFactory
-    from buildbot.plugins import schedulers
-
-    c['schedulers'] = [
-        schedulers.AnyBranchScheduler(
-            name="sched",
-            builderNames=["testy"])]
-
-    f = BuildFactory()
-    f.addStep(TestCommandMixinStep())
-    c['builders'] = [
-        BuilderConfig(name="testy",
-                      workernames=["local1"],
-                      factory=f)]
-    return c

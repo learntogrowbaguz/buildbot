@@ -20,7 +20,6 @@ from twisted.python import log
 
 
 class LoggingMixin:
-
     def setUpLogging(self):
         self._logEvents = []
         log.addObserver(self._logEvents.append)
@@ -39,13 +38,12 @@ class LoggingMixin:
     def assertLogged(self, regexp):
         if not self.logContainsMessage(regexp):
             lines = [log.textFromEventDict(e) for e in self._logEvents]
-            self.fail(f"{repr(regexp)} not matched in log output.\n{lines} ")
+            self.fail(f"{regexp!r} not matched in log output.\n{lines} ")
 
     def assertNotLogged(self, regexp):
         if self.logContainsMessage(regexp):
             lines = [log.textFromEventDict(e) for e in self._logEvents]
-            self.fail(f"{repr(regexp)} matched in log output.\n{lines} ")
+            self.fail(f"{regexp!r} matched in log output.\n{lines} ")
 
     def assertWasQuiet(self):
-        self.assertEqual([
-            log.textFromEventDict(event) for event in self._logEvents], [])
+        self.assertEqual([log.textFromEventDict(event) for event in self._logEvents], [])

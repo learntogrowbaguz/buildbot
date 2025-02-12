@@ -22,8 +22,8 @@ from buildbot.www.plugin import Application
 
 
 class WSGIDashboardsApplication(Application):
-
     def setConfiguration(self, config):
+        super().setConfiguration(config)
         for dashboard in config:
             dashboard['app'].buildbot_api = self
             resource = WSGIResource(reactor, reactor.getThreadPool(), dashboard['app'])

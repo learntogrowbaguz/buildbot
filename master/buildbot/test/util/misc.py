@@ -16,6 +16,7 @@
 import os
 import sys
 from io import StringIO
+from typing import TYPE_CHECKING
 
 from twisted.python import log
 from twisted.trial.unittest import TestCase
@@ -23,9 +24,11 @@ from twisted.trial.unittest import TestCase
 import buildbot
 from buildbot.process.buildstep import BuildStep
 
+if TYPE_CHECKING:
+    from twisted.trial import unittest
+
 
 class PatcherMixin:
-
     """
     Mix this in to get a few special-cased patching methods
     """
@@ -36,29 +39,36 @@ class PatcherMixin:
         if hasattr(os, 'uname'):
             self.patch(os, 'uname', replacement)
         else:
+
             def cleanup():
                 del os.uname
+
             self.addCleanup(cleanup)
             os.uname = replacement
 
 
-class StdoutAssertionsMixin:
+if TYPE_CHECKING:
+    _StdoutAssertionsMixinBase = unittest.TestCase
+else:
+    _StdoutAssertionsMixinBase = object
 
+
+class StdoutAssertionsMixin(_StdoutAssertionsMixinBase):
     """
     Mix this in to be able to assert on stdout during the test
     """
 
-    def setUpStdoutAssertions(self):
+    def setUpStdoutAssertions(self) -> None:
         self.stdout = StringIO()
         self.patch(sys, 'stdout', self.stdout)
 
-    def assertWasQuiet(self):
+    def assertWasQuiet(self) -> None:
         self.assertEqual(self.stdout.getvalue(), '')
 
-    def assertInStdout(self, exp):
+    def assertInStdout(self, exp: str) -> None:
         self.assertIn(exp, self.stdout.getvalue())
 
-    def getStdout(self):
+    def getStdout(self) -> str:
         return self.stdout.getvalue().strip()
 
 
@@ -99,12 +109,18 @@ def encodeExecutableAndArgs(executable, args, encoding="utf-8"):
 
 
 def enable_trace(case, trace_exclusions=None, f=sys.stdout):
-    """This function can be called to enable tracing of the execution
-    """
+    """This function can be called to enable tracing of the execution"""
     if trace_exclusions is None:
         trace_exclusions = [
-            "twisted", "worker_transition.py", "util/tu", "util/path",
-            "log.py", "/mq/", "/db/", "buildbot/data/", "fake/reactor.py"
+            "twisted",
+            "worker_transition.py",
+            "util/tu",
+            "util/path",
+            "log.py",
+            "/mq/",
+            "/db/",
+            "buildbot/data/",
+            "fake/reactor.py",
         ]
 
     bbbase = os.path.dirname(buildbot.__file__)
@@ -115,8 +131,13 @@ def enable_trace(case, trace_exclusions=None, f=sys.stdout):
             if not any(te in frame.f_code.co_filename for te in trace_exclusions):
                 if event == "call":
                     state['indent'] += 2
-                    print("-" * state['indent'], frame.f_code.co_filename.replace(bbbase, ""),
-                          frame.f_code.co_name, frame.f_code.co_varnames, file=f)
+                    print(
+                        "-" * state['indent'],
+                        frame.f_code.co_filename.replace(bbbase, ""),
+                        frame.f_code.co_name,
+                        frame.f_code.co_varnames,
+                        file=f,
+                    )
                 if event == "return":
                     state['indent'] -= 2
         return tracefunc
@@ -126,7 +147,6 @@ def enable_trace(case, trace_exclusions=None, f=sys.stdout):
 
 
 class DebugIntegrationLogsMixin:
-
     def setupDebugIntegrationLogs(self):
         # to ease debugging we display the error logs in the test log
         origAddCompleteLog = BuildStep.addCompleteLog
@@ -135,6 +155,7 @@ class DebugIntegrationLogsMixin:
             if name.endswith("err.text"):
                 log.msg("got error log!", name, _log)
             return origAddCompleteLog(self, name, _log)
+
         self.patch(BuildStep, "addCompleteLog", addCompleteLog)
 
         if 'BBTRACE' in os.environ:
@@ -142,17 +163,31 @@ class DebugIntegrationLogsMixin:
 
 
 class BuildDictLookAlike:
-
-    """ a class whose instances compares to any build dict that this reporter is supposed to send
+    """a class whose instances compares to any build dict that this reporter is supposed to send
     out"""
 
     def __init__(self, extra_keys=None, expected_missing_keys=None, **assertions):
         self.keys = [
-            'builder', 'builderid', 'buildid', 'buildrequest', 'buildrequestid',
-            'buildset', 'complete', 'complete_at', 'masterid', 'number',
-            'parentbuild', 'parentbuilder', 'properties', 'results',
-            'started_at', 'state_string', 'url', 'workerid'
-            ]
+            "builder",
+            "builderid",
+            "buildid",
+            "buildrequest",
+            "buildrequestid",
+            "buildset",
+            "complete",
+            "complete_at",
+            "locks_duration_s",
+            "masterid",
+            "number",
+            "parentbuild",
+            "parentbuilder",
+            "properties",
+            "results",
+            "started_at",
+            "state_string",
+            "url",
+            "workerid",
+        ]
         if extra_keys:
             self.keys.extend(extra_keys)
         if expected_missing_keys is not None:
@@ -163,9 +198,11 @@ class BuildDictLookAlike:
 
     def __eq__(self, b):
         if sorted(b.keys()) != self.keys:
-            raise AssertionError('BuildDictLookAlike is not equal to build: '
-                                 f'Extra keys: {set(b.keys()) - set(self.keys)} '
-                                 f'Missing keys: {set(self.keys) - set(b.keys())}')
+            raise AssertionError(
+                'BuildDictLookAlike is not equal to build: '
+                f'Extra keys: {set(b.keys()) - set(self.keys)} '
+                f'Missing keys: {set(self.keys) - set(b.keys())}'
+            )
         for k, v in self.assertions.items():
             if b[k] != v:
                 return False

@@ -13,20 +13,48 @@
 #
 # Copyright Buildbot Team Members
 
-import sqlalchemy as sa
+from __future__ import annotations
 
+import dataclasses
+from typing import TYPE_CHECKING
+
+import sqlalchemy as sa
 from twisted.python import log
 
 from buildbot.data import base
 
+if TYPE_CHECKING:
+    from typing import Sequence
+
+
+class NotSupportedFieldTypeError(TypeError):
+    def __init__(self, data, *args: object) -> None:
+        super().__init__(
+            (f"Unsupported data type '{type(data)}': must be an instance of Dict or a Dataclass."),
+            *args,
+        )
+
+
+def _data_getter(d, fld):
+    if isinstance(d, dict):
+        return d[fld]
+    if dataclasses.is_dataclass(d):
+        try:
+            return getattr(d, fld)
+        except AttributeError as e:
+            # backward compatibility when only dict was allowed
+            raise KeyError(*e.args) from e
+
+    raise NotSupportedFieldTypeError(d)
+
 
 class FieldBase:
-
     """
     This class implements a basic behavior
     to wrap value into a `Field` instance
 
     """
+
     __slots__ = ['field', 'op', 'values']
 
     singular_operators = {
@@ -72,10 +100,12 @@ class FieldBase:
         # only support string values, because currently there are no queries against lists in SQL
     }
 
-    def __init__(self, field, op, values):
+    def __init__(self, field: bytes | str, op: str, values: Sequence | set):
         self.field = field
         self.op = op
         self.values = values
+        # `str` is a Sequence as well...
+        assert not isinstance(values, str)
 
     def getOperator(self, sqlMode=False):
         v = self.values
@@ -96,7 +126,7 @@ class FieldBase:
         fld = self.field
         v = self.values
         f = self.getOperator()
-        return (d for d in data if f(d[fld], v))
+        return (d for d in data if f(_data_getter(d, fld), v))
 
     def __repr__(self):
         return f"resultspec.{self.__class__.__name__}('{self.field}','{self.op}',{self.values})"
@@ -112,7 +142,6 @@ class FieldBase:
 
 
 class Property(FieldBase):
-
     """
     Wraps ``property`` type value(s)
 
@@ -120,7 +149,6 @@ class Property(FieldBase):
 
 
 class Filter(FieldBase):
-
     """
     Wraps ``filter`` type value(s)
 
@@ -133,6 +161,7 @@ class NoneComparator:
     '> None' and '< None' are not supported
     in Python 3.
     """
+
     def __init__(self, value):
         self.value = value
 
@@ -168,6 +197,7 @@ class ReverseComparator:
     and instead of a > b, it does b > a.
     This can be used in reverse comparisons.
     """
+
     def __init__(self, value):
         self.value = value
 
@@ -185,12 +215,11 @@ class ReverseComparator:
 
 
 class ResultSpec:
+    __slots__ = ['filters', 'fields', 'properties', 'order', 'limit', 'offset', 'fieldMapping']
 
-    __slots__ = ['filters', 'fields', 'properties',
-                 'order', 'limit', 'offset', 'fieldMapping']
-
-    def __init__(self, filters=None, fields=None, properties=None, order=None,
-                 limit=None, offset=None):
+    def __init__(
+        self, filters=None, fields=None, properties=None, order=None, limit=None, offset=None
+    ):
         self.filters = filters or []
         self.properties = properties or []
         self.fields = fields
@@ -200,9 +229,11 @@ class ResultSpec:
         self.fieldMapping = {}
 
     def __repr__(self):
-        return (f"ResultSpec(**{{'filters': {self.filters}, 'fields': {self.fields}, "
-                f"'properties': {self.properties}, 'order': {self.order}, 'limit': {self.limit}, "
-                f"'offset': {self.offset}" + "})")
+        return (
+            f"ResultSpec(**{{'filters': {self.filters}, 'fields': {self.fields}, "
+            f"'properties': {self.properties}, 'order': {self.order}, 'limit': {self.limit}, "
+            f"'offset': {self.offset}" + "})"
+        )
 
     def __eq__(self, b):
         for i in ['filters', 'fields', 'properties', 'order', 'limit', 'offset']:
@@ -255,7 +286,8 @@ class ResultSpec:
                 return int(eqVals[0])
             except ValueError as e:
                 raise ValueError(
-                    f"Filter value for {field} should be integer, but got: {eqVals[0]}") from e
+                    f"Filter value for {field} should be integer, but got: {eqVals[0]}"
+                ) from e
         return None
 
     def removePagination(self):
@@ -325,13 +357,16 @@ class ResultSpec:
         # we cannot limit in sql if there is missing filtering or ordering
         if unmatched_filters or unmatched_order:
             if self.offset is not None or self.limit is not None:
-                log.msg("Warning: limited data api query is not backed by db "
-                        "because of following filters",
-                        unmatched_filters, unmatched_order)
+                log.msg(
+                    "Warning: limited data api query is not backed by db "
+                    "because of following filters",
+                    unmatched_filters,
+                    unmatched_order,
+                )
             self.filters = unmatched_filters
             self.order = tuple(unmatched_order)
             return query, None
-        count_query = sa.select([sa.func.count()]).select_from(query.alias('query'))
+        count_query = sa.select(sa.func.count()).select_from(query.alias('query'))
         self.order = None
         self.filters = []
         # finally, slice out the limit/offset
@@ -346,7 +381,8 @@ class ResultSpec:
         return query, count_query
 
     def thd_execute(self, conn, q, dictFromRow):
-        offset, limit = self.offset, self.limit
+        offset = self.offset
+        limit = self.limit
         q, qc = self.applyToSQLQuery(q)
         res = conn.execute(q)
         rv = [dictFromRow(row) for row in res.fetchall()]
@@ -354,7 +390,9 @@ class ResultSpec:
         if qc is not None and (offset or limit):
             total = conn.execute(qc).scalar()
             rv = base.ListResult(rv)
-            rv.offset, rv.total, rv.limit = offset, total, limit
+            rv.offset = offset
+            rv.total = total
+            rv.limit = limit
         return rv
 
     def apply(self, data):
@@ -365,13 +403,18 @@ class ResultSpec:
             fields = set(self.fields)
 
             def includeFields(d):
-                return dict((k, v) for k, v in d.items()
-                            if k in fields)
+                if isinstance(d, dict):
+                    return dict((k, v) for k, v in d.items() if k in fields)
+                elif dataclasses.is_dataclass(d):
+                    raise TypeError("includeFields can't filter fields of dataclasses")
+                raise NotSupportedFieldTypeError(d)
+
             applyFields = includeFields
         else:
             fields = None
+            applyFields = None
 
-        if isinstance(data, dict):
+        if isinstance(data, dict) or dataclasses.is_dataclass(data):
             # item details
             if fields:
                 data = applyFields(data)
@@ -383,12 +426,15 @@ class ResultSpec:
             # item collection
             if isinstance(data, base.ListResult):
                 # if pagination was applied, then fields, etc. must be empty
-                assert not fields and not order and not filters, \
+                assert not fields and not order and not filters, (
                     "endpoint must apply fields, order, and filters if it performs pagination"
-                offset, total = data.offset, data.total
+                )
+                offset = data.offset
+                total = data.total
                 limit = data.limit
             else:
-                offset, total = None, None
+                offset = None
+                total = None
                 limit = None
 
             if fields:
@@ -403,13 +449,13 @@ class ResultSpec:
                 total = len(data)
 
             if self.order:
+
                 def keyFunc(elem, order=self.order):
                     """
                     Do a multi-level sort by passing in the keys
                     to sort by.
 
-                    @param elem: each item in the list to sort.  It must be
-                              a C{dict}
+                    @param elem: each item in the list to sort.
                     @param order: a list of keys to sort by, such as:
                                 ('lastName', 'firstName', 'age')
                     @return: a key used by sorted(). This will be a
@@ -425,7 +471,7 @@ class ResultSpec:
                             # it means sort by 'lastName' in reverse.
                             k = k[1:]
                             doReverse = True
-                        val = NoneComparator(elem[k])
+                        val = NoneComparator(_data_getter(elem, k))
                         if doReverse:
                             val = ReverseComparator(val)
                         compareKey.append(val)
@@ -437,21 +483,19 @@ class ResultSpec:
             if self.offset is not None or self.limit is not None:
                 if offset is not None or limit is not None:
                     raise AssertionError("endpoint must clear offset/limit")
-                end = ((self.offset or 0) + self.limit
-                       if self.limit is not None
-                       else None)
-                data = data[self.offset:end]
+                end = (self.offset or 0) + self.limit if self.limit is not None else None
+                data = data[self.offset : end]
                 offset = self.offset
                 limit = self.limit
 
             rv = base.ListResult(data)
-            rv.offset, rv.total = offset, total
+            rv.offset = offset
+            rv.total = total
             rv.limit = limit
             return rv
 
 
 # a resultSpec which does not implement filtering in python (for tests)
 class OptimisedResultSpec(ResultSpec):
-
     def apply(self, data):
         return data

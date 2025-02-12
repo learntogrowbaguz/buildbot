@@ -16,8 +16,7 @@
 import json
 import os
 import textwrap
-
-import mock
+from unittest import mock
 
 from autobahn.wamp.exception import TransportLost
 from autobahn.wamp.types import SubscribeOptions
@@ -36,7 +35,6 @@ class FakeEventDetails:
 
 
 class ComparableSubscribeOptions(SubscribeOptions):
-
     def __eq__(self, other):
         if not isinstance(other, SubscribeOptions):
             return False
@@ -68,8 +66,8 @@ class FakeWampConnector:
         owntopic = self.topic.split(".")
         if len(topic) != len(owntopic):
             return False
-        for i, _ in enumerate(topic):
-            if owntopic[i] != "" and topic[i] != owntopic[i]:
+        for i, itopic in enumerate(topic):
+            if owntopic[i] != "" and itopic != owntopic[i]:
                 return False
         return True
 
@@ -96,22 +94,24 @@ class TopicMatch(unittest.TestCase):
     # test unit tests
 
     def test_topic_match(self):
-        matches = [("a.b.c", "a.b.c"),
-                   ("a..c", "a.c.c"),
-                   ("a.b.", "a.b.c"),
-                   (".b.", "a.b.c"),
-                   ]
+        matches = [
+            ("a.b.c", "a.b.c"),
+            ("a..c", "a.c.c"),
+            ("a.b.", "a.b.c"),
+            (".b.", "a.b.c"),
+        ]
         for i, j in matches:
             w = FakeWampConnector()
             w.topic = i
             self.assertTrue(w.topic_match(j))
 
     def test_topic_not_match(self):
-        matches = [("a.b.c", "a.b.d"),
-                   ("a..c", "a.b.d"),
-                   ("a.b.", "a.c.c"),
-                   (".b.", "a.a.c"),
-                   ]
+        matches = [
+            ("a.b.c", "a.b.d"),
+            ("a..c", "a.b.d"),
+            ("a.b.", "a.c.c"),
+            (".b.", "a.a.c"),
+        ]
         for i, j in matches:
             w = FakeWampConnector()
             w.topic = i
@@ -119,25 +119,26 @@ class TopicMatch(unittest.TestCase):
 
 
 class WampMQ(TestReactorMixin, unittest.TestCase):
-
     """
-        Stimulate the code with a fake wamp router:
-        A router which only accepts one subscriber on one topic
+    Stimulate the code with a fake wamp router:
+    A router which only accepts one subscriber on one topic
     """
 
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         self.master.wamp = FakeWampConnector()
         self.mq = wamp.WampMQ()
         yield self.mq.setServiceParent(self.master)
         yield self.mq.startService()
 
-    @defer.inlineCallbacks
-    def tearDown(self):
-        if self.mq.running:
-            yield self.mq.stopService()
+        @defer.inlineCallbacks
+        def cleanup():
+            if self.mq.running:
+                yield self.mq.stopService()
+
+        self.addCleanup(cleanup)
 
     @defer.inlineCallbacks
     def test_startConsuming_basic(self):
@@ -145,16 +146,17 @@ class WampMQ(TestReactorMixin, unittest.TestCase):
         yield self.mq.startConsuming(None, ('a', 'b'))
         options = ComparableSubscribeOptions(details_arg='details')
         self.master.wamp.subscribe.assert_called_with(
-            mock.ANY, 'org.buildbot.mq.a.b', options=options)
+            mock.ANY, 'org.buildbot.mq.a.b', options=options
+        )
 
     @defer.inlineCallbacks
     def test_startConsuming_wildcard(self):
         self.master.wamp.subscribe = mock.Mock()
         yield self.mq.startConsuming(None, ('a', None))
-        options = ComparableSubscribeOptions(
-            match="wildcard", details_arg='details')
+        options = ComparableSubscribeOptions(match="wildcard", details_arg='details')
         self.master.wamp.subscribe.assert_called_with(
-            mock.ANY, 'org.buildbot.mq.a.', options=options)
+            mock.ANY, 'org.buildbot.mq.a.', options=options
+        )
 
     @defer.inlineCallbacks
     def test_forward_data(self):
@@ -230,42 +232,39 @@ class WampMQ(TestReactorMixin, unittest.TestCase):
 
 
 class FakeConfig:
-    mq = dict(type='wamp', router_url="wss://foo", realm="realm1")
+    mq = {"type": 'wamp', "router_url": 'wss://foo', "realm": 'realm1'}
 
 
 class WampMQReal(TestReactorMixin, unittest.TestCase):
+    """
+    Tests a little bit more painful to run, but which involve real communication with
+    a wamp router
+    """
 
-    """
-        Tests a little bit more painful to run, but which involve real communication with
-        a wamp router
-    """
     HOW_TO_RUN = textwrap.dedent("""\
         define WAMP_ROUTER_URL to a wamp router to run this test
         > crossbar init
         > crossbar start &
         > export WAMP_ROUTER_URL=ws://localhost:8080/ws
         > trial buildbot.unit.test_mq_wamp""")
-    # if connection is bad, this test can timeout easily
-    # we reduce the timeout to help maintain the sanity of the developer
-    timeout = 2
 
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         if "WAMP_ROUTER_URL" not in os.environ:
             raise unittest.SkipTest(self.HOW_TO_RUN)
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         self.mq = wamp.WampMQ()
         yield self.mq.setServiceParent(self.master)
         self.connector = self.master.wamp = connector.WampConnector()
         yield self.connector.setServiceParent(self.master)
+
         yield self.master.startService()
+        self.addCleanup(self.master.stopService)
+
         config = FakeConfig()
         config.mq['router_url'] = os.environ["WAMP_ROUTER_URL"]
         yield self.connector.reconfigServiceWithBuildbotConfig(config)
-
-    def tearDown(self):
-        return self.master.stopService()
 
     @defer.inlineCallbacks
     def test_forward_data(self):

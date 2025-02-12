@@ -18,6 +18,7 @@ module for regrouping all FileWriterImpl and FileReaderImpl away from steps
 """
 
 import os
+import shutil
 import tarfile
 import tempfile
 from io import BytesIO
@@ -28,7 +29,6 @@ from buildbot.worker.protocols import base
 
 
 class FileWriter(base.FileWriterImpl):
-
     """
     Helper class that acts as a file-object with write access
     """
@@ -57,7 +57,7 @@ class FileWriter(base.FileWriterImpl):
         data = unicode2bytes(data)
         if self.remaining is not None:
             if len(data) > self.remaining:
-                data = data[:self.remaining]
+                data = data[: self.remaining]
             self.fp.write(data)
             self.remaining = self.remaining - len(data)
         else:
@@ -87,14 +87,16 @@ class FileWriter(base.FileWriterImpl):
         fp = getattr(self, "fp", None)
         if fp:
             fp.close()
-            if self.destfile and os.path.exists(self.destfile):
-                os.unlink(self.destfile)
-            if self.tmpname and os.path.exists(self.tmpname):
-                os.unlink(self.tmpname)
+            self.purge()
+
+    def purge(self):
+        if self.destfile and os.path.exists(self.destfile):
+            os.unlink(self.destfile)
+        if self.tmpname and os.path.exists(self.tmpname):
+            os.unlink(self.tmpname)
 
 
 class DirectoryWriter(FileWriter):
-
     """
     A DirectoryWriter is implemented as a FileWriter, with an added post-processing
     step to unpack the archive, once the transfer has completed.
@@ -126,12 +128,19 @@ class DirectoryWriter(FileWriter):
 
         # Unpack archive and clean up after self
         with tarfile.open(name=self.tarname, mode=mode) as archive:
-            archive.extractall(path=self.destroot)
+            if hasattr(tarfile, 'data_filter'):
+                archive.extractall(path=self.destroot, filter='data')
+            else:
+                archive.extractall(path=self.destroot)
         os.remove(self.tarname)
+
+    def purge(self):
+        super().purge()
+        if os.path.isdir(self.destroot):
+            shutil.rmtree(self.destroot)
 
 
 class FileReader(base.FileReaderImpl):
-
     """
     Helper class that acts as a file-object with read access
     """
@@ -165,7 +174,6 @@ class FileReader(base.FileReaderImpl):
 
 
 class StringFileWriter(base.FileWriterImpl):
-
     """
     FileWriter class that just puts received data into a buffer.
 
@@ -184,7 +192,6 @@ class StringFileWriter(base.FileWriterImpl):
 
 
 class StringFileReader(FileReader):
-
     """
     FileWriter class that just buid send data from a string.
 

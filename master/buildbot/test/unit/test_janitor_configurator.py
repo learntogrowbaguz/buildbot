@@ -16,11 +16,9 @@
 
 import datetime
 from datetime import timedelta
+from unittest import mock
 
 from parameterized import parameterized
-
-import mock
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
@@ -45,15 +43,16 @@ class JanitorConfiguratorTests(configurators.ConfiguratorMixin, unittest.Synchro
 
     def test_nothing(self):
         self.setupConfigurator()
-        self.assertEqual(self.config_dict, {
-        })
+        self.assertEqual(self.config_dict, {})
 
     @parameterized.expand([
         ('logs', {'logHorizon': timedelta(weeks=1)}, [LogChunksJanitor]),
         ('build_data', {'build_data_horizon': timedelta(weeks=1)}, [BuildDataJanitor]),
-        ('logs_build_data', {'build_data_horizon': timedelta(weeks=1),
-                             'logHorizon': timedelta(weeks=1)},
-         [LogChunksJanitor, BuildDataJanitor]),
+        (
+            'logs_build_data',
+            {'build_data_horizon': timedelta(weeks=1), 'logHorizon': timedelta(weeks=1)},
+            [LogChunksJanitor, BuildDataJanitor],
+        ),
     ])
     def test_steps(self, name, configuration, exp_steps):
         self.setupConfigurator(**configuration)
@@ -64,27 +63,20 @@ class JanitorConfiguratorTests(configurators.ConfiguratorMixin, unittest.Synchro
         self.expectNoConfigError()
 
 
-class LogChunksJanitorTests(TestBuildStepMixin,
-                            configmixin.ConfigErrorsMixin,
-                            TestReactorMixin,
-                            unittest.TestCase):
-
+class LogChunksJanitorTests(
+    TestBuildStepMixin, configmixin.ConfigErrorsMixin, TestReactorMixin, unittest.TestCase
+):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         yield self.setup_test_build_step()
         self.patch(janitor, "now", lambda: datetime.datetime(year=2017, month=1, day=1))
 
-    def tearDown(self):
-        return self.tear_down_test_build_step()
-
     @defer.inlineCallbacks
     def test_basic(self):
-        self.setup_step(
-            LogChunksJanitor(logHorizon=timedelta(weeks=1)))
+        self.setup_step(LogChunksJanitor(logHorizon=timedelta(weeks=1)))
         self.master.db.logs.deleteOldLogChunks = mock.Mock(return_value=3)
-        self.expect_outcome(result=SUCCESS,
-                           state_string="deleted 3 logchunks")
+        self.expect_outcome(result=SUCCESS, state_string="deleted 3 logchunks")
         yield self.run_step()
         expected_timestamp = datetime2epoch(datetime.datetime(year=2016, month=12, day=25))
         self.master.db.logs.deleteOldLogChunks.assert_called_with(expected_timestamp)

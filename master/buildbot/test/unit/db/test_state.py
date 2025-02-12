@@ -15,26 +15,19 @@
 
 
 from twisted.internet import defer
+from twisted.trial import unittest
 
-from buildbot.db import state
 from buildbot.test import fakedb
-from buildbot.test.util import connector_component
-from buildbot.test.util import db
+from buildbot.test.fake import fakemaster
+from buildbot.test.reactor import TestReactorMixin
 
 
-class TestStateConnectorComponent(
-    connector_component.ConnectorComponentMixin,
-        db.TestCase):
-
+class TestStateConnectorComponent(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def setUp(self):
-        yield self.setUpConnectorComponent(
-            table_names=['objects', 'object_state'])
-
-        self.db.state = state.StateConnectorComponent(self.db)
-
-    def tearDown(self):
-        return self.tearDownConnectorComponent()
+        self.setup_test_reactor()
+        self.master = yield fakemaster.make_master(self, wantDb=True)
+        self.db = self.master.db
 
     @defer.inlineCallbacks
     def test_getObjectId_new(self):
@@ -46,15 +39,16 @@ class TestStateConnectorComponent(
             q = self.db.model.objects.select()
             rows = conn.execute(q).fetchall()
             self.assertEqual(
-                [(r.id, r.name, r.class_name) for r in rows],
-                [(objectid, 'someobj', 'someclass')])
+                [(r.id, r.name, r.class_name) for r in rows], [(objectid, 'someobj', 'someclass')]
+            )
+
         yield self.db.pool.do(thd)
 
     @defer.inlineCallbacks
     def test_getObjectId_existing(self):
-        yield self.insertTestData([
-            fakedb.Object(id=19, name='someobj',
-                          class_name='someclass')])
+        yield self.db.insert_test_data([
+            fakedb.Object(id=19, name='someobj', class_name='someclass')
+        ])
         objectid = yield self.db.state.getObjectId('someobj', 'someclass')
 
         self.assertEqual(objectid, 19)
@@ -65,8 +59,11 @@ class TestStateConnectorComponent(
         # and adding a new one, triggering the fallback to re-running
         # the select.
         def hook(conn):
-            conn.execute(self.db.model.objects.insert(),
-                         id=27, name='someobj', class_name='someclass')
+            conn.execute(
+                self.db.model.objects.insert().values(id=27, name='someobj', class_name='someclass')
+            )
+            conn.commit()
+
         self.db.state._test_timing_hook = hook
 
         objectid = yield self.db.state.getObjectId('someobj', 'someclass')
@@ -84,13 +81,16 @@ class TestStateConnectorComponent(
             q = self.db.model.objects.select()
             rows = conn.execute(q).fetchall()
             self.assertEqual(
-                [(r.id, r.name, r.class_name) for r in rows],
-                [(objectid, expn, 'someclass')])
+                [(r.id, r.name, r.class_name) for r in rows], [(objectid, expn, 'someclass')]
+            )
+
         yield self.db.pool.do(thd)
 
+    @defer.inlineCallbacks
     def test_getState_missing(self):
-        d = self.db.state.getState(10, 'nosuch')
-        return self.assertFailure(d, KeyError)
+        with self.assertRaises(KeyError):
+            yield self.db.state.getState(10, 'nosuch')
+        self.flushLoggedErrors(KeyError)
 
     @defer.inlineCallbacks
     def test_getState_missing_default(self):
@@ -106,7 +106,7 @@ class TestStateConnectorComponent(
 
     @defer.inlineCallbacks
     def test_getState_present(self):
-        yield self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='x', class_name='y'),
             fakedb.ObjectState(objectid=10, name='x', value_json='[1,2]'),
         ])
@@ -114,18 +114,19 @@ class TestStateConnectorComponent(
 
         self.assertEqual(val, [1, 2])
 
+    @defer.inlineCallbacks
     def test_getState_badjson(self):
-        d = self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='x', class_name='y'),
             fakedb.ObjectState(objectid=10, name='x', value_json='ff[1'),
         ])
-        d.addCallback(lambda _:
-                      self.db.state.getState(10, 'x'))
-        return self.assertFailure(d, TypeError)
+        with self.assertRaises(TypeError):
+            yield self.db.state.getState(10, 'x')
+        self.flushLoggedErrors(TypeError)
 
     @defer.inlineCallbacks
     def test_setState(self):
-        yield self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='-', class_name='-'),
         ])
         yield self.db.state.setState(10, 'x', [1, 2])
@@ -134,21 +135,23 @@ class TestStateConnectorComponent(
             q = self.db.model.object_state.select()
             rows = conn.execute(q).fetchall()
             self.assertEqual(
-                [(r.objectid, r.name, r.value_json) for r in rows],
-                [(10, 'x', '[1, 2]')])
+                [(r.objectid, r.name, r.value_json) for r in rows], [(10, 'x', '[1, 2]')]
+            )
+
         yield self.db.pool.do(thd)
 
+    @defer.inlineCallbacks
     def test_setState_badjson(self):
-        d = self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='x', class_name='y'),
         ])
-        d.addCallback(lambda _:
-                      self.db.state.setState(10, 'x', self))  # self is not JSON-able..
-        return self.assertFailure(d, TypeError)
+        with self.assertRaises(TypeError):
+            yield self.db.state.setState(10, 'x', self)  # self is not JSON-able..
+        self.flushLoggedErrors(TypeError)
 
     @defer.inlineCallbacks
     def test_setState_existing(self):
-        yield self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='-', class_name='-'),
             fakedb.ObjectState(objectid=10, name='x', value_json='99'),
         ])
@@ -158,18 +161,22 @@ class TestStateConnectorComponent(
             q = self.db.model.object_state.select()
             rows = conn.execute(q).fetchall()
             self.assertEqual(
-                [(r.objectid, r.name, r.value_json) for r in rows],
-                [(10, 'x', '[1, 2]')])
+                [(r.objectid, r.name, r.value_json) for r in rows], [(10, 'x', '[1, 2]')]
+            )
+
         yield self.db.pool.do(thd)
 
     @defer.inlineCallbacks
     def test_setState_conflict(self):
         def hook(conn):
-            conn.execute(self.db.model.object_state.insert(),
-                         objectid=10, name='x', value_json='22')
+            conn.execute(
+                self.db.model.object_state.insert().values(objectid=10, name='x', value_json='22')
+            )
+            conn.commit()
+
         self.db.state._test_timing_hook = hook
 
-        yield self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='-', class_name='-'),
         ])
         yield self.db.state.setState(10, 'x', [1, 2])
@@ -177,14 +184,13 @@ class TestStateConnectorComponent(
         def thd(conn):
             q = self.db.model.object_state.select()
             rows = conn.execute(q).fetchall()
-            self.assertEqual(
-                [(r.objectid, r.name, r.value_json) for r in rows],
-                [(10, 'x', '22')])
+            self.assertEqual([(r.objectid, r.name, r.value_json) for r in rows], [(10, 'x', '22')])
+
         yield self.db.pool.do(thd)
 
     @defer.inlineCallbacks
     def test_atomicCreateState(self):
-        yield self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='-', class_name='-'),
         ])
         res = yield self.db.state.atomicCreateState(10, 'x', lambda: [1, 2])
@@ -194,13 +200,16 @@ class TestStateConnectorComponent(
 
     @defer.inlineCallbacks
     def test_atomicCreateState_conflict(self):
-        yield self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='-', class_name='-'),
         ])
 
         def hook(conn):
-            conn.execute(self.db.model.object_state.insert(),
-                         objectid=10, name='x', value_json='22')
+            conn.execute(
+                self.db.model.object_state.insert().values(objectid=10, name='x', value_json='22')
+            )
+            conn.commit()
+
         self.db.state._test_timing_hook = hook
 
         res = yield self.db.state.atomicCreateState(10, 'x', lambda: [1, 2])
@@ -210,9 +219,10 @@ class TestStateConnectorComponent(
 
     @defer.inlineCallbacks
     def test_atomicCreateState_nojsonable(self):
-        yield self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Object(id=10, name='-', class_name='-'),
         ])
 
-        d = self.db.state.atomicCreateState(10, 'x', object)
-        yield self.assertFailure(d, TypeError)
+        with self.assertRaises(TypeError):
+            yield self.db.state.atomicCreateState(10, 'x', object)
+        self.flushLoggedErrors(TypeError)

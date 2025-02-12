@@ -13,6 +13,8 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
 import calendar
 import datetime
 import itertools
@@ -22,15 +24,15 @@ import re
 import sys
 import textwrap
 import time
-from builtins import bytes
+from typing import TYPE_CHECKING
+from typing import ClassVar
+from typing import Sequence
+from typing import overload
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
 
 import dateutil.tz
-
 from twisted.python import reflect
-from twisted.python.deprecate import deprecatedModuleAttribute
-from twisted.python.versions import Version
 from zope.interface import implementer
 
 from buildbot.interfaces import IConfigured
@@ -38,6 +40,13 @@ from buildbot.util.giturlparse import giturlparse
 from buildbot.util.misc import deferredLocked
 
 from ._notifier import Notifier
+
+if TYPE_CHECKING:
+    from typing import ClassVar
+    from typing import Sequence
+    from typing import TypeVar
+
+    _T = TypeVar('_T')
 
 
 def naturalSort(array):
@@ -51,6 +60,7 @@ def naturalSort(array):
 
     def key_func(item):
         return [try_int(s) for s in re.split(r'(\d+)', item)]
+
     # prepend integer keys to each element, sort them, then strip the keys
     keyed_array = sorted([(key_func(i), i) for i in array])
     array = [i[1] for i in keyed_array]
@@ -70,11 +80,10 @@ def flattened_iterator(l, types=(list, tuple)):
         return
 
     for element in l:
-        for sub_element in flattened_iterator(element, types):
-            yield sub_element
+        yield from flattened_iterator(element, types)
 
 
-def flatten(l, types=(list, )):
+def flatten(l, types=(list,)):
     """
     Given a list/tuple that potentially contains nested lists/tuples of arbitrary nesting,
     flatten into a single dimension.  In other words, turn [(5, 6, [8, 3]), 2, [2, 1, (3, 4)]]
@@ -116,15 +125,15 @@ def fuzzyInterval(seconds):
     if seconds < 20:
         return f"{seconds} seconds".format(seconds)
     if seconds < 55:
-        return f"{round(seconds / 10.) * 10} seconds"
-    minutes = round(seconds / 60.)
+        return f"{round(seconds / 10.0) * 10} seconds"
+    minutes = round(seconds / 60.0)
     if minutes == 1:
         return "a minute"
     if minutes < 20:
         return f"{minutes} minutes"
     if minutes < 55:
-        return f"{round(minutes / 10.) * 10} minutes"
-    hours = round(minutes / 60.)
+        return f"{round(minutes / 10.0) * 10} minutes"
+    hours = round(minutes / 60.0)
     if hours == 1:
         return "an hour"
     if hours < 24:
@@ -147,18 +156,16 @@ def fuzzyInterval(seconds):
 
 @implementer(IConfigured)
 class ComparableMixin:
-    compare_attrs = ()
+    compare_attrs: ClassVar[Sequence[str]] = ()
 
     class _None:
         pass
 
     def __hash__(self):
         compare_attrs = []
-        reflect.accumulateClassList(
-            self.__class__, 'compare_attrs', compare_attrs)
+        reflect.accumulateClassList(self.__class__, 'compare_attrs', compare_attrs)
 
-        alist = [self.__class__] + \
-                [getattr(self, name, self._None) for name in compare_attrs]
+        alist = [self.__class__] + [getattr(self, name, self._None) for name in compare_attrs]
         return hash(tuple(map(str, alist)))
 
     def _cmp_common(self, them):
@@ -169,13 +176,10 @@ class ComparableMixin:
             return (False, None, None)
 
         compare_attrs = []
-        reflect.accumulateClassList(
-            self.__class__, 'compare_attrs', compare_attrs)
+        reflect.accumulateClassList(self.__class__, 'compare_attrs', compare_attrs)
 
-        self_list = [getattr(self, name, self._None)
-                     for name in compare_attrs]
-        them_list = [getattr(them, name, self._None)
-                     for name in compare_attrs]
+        self_list = [getattr(self, name, self._None) for name in compare_attrs]
+        them_list = [getattr(them, name, self._None) for name in compare_attrs]
         return (True, self_list, them_list)
 
     def __eq__(self, them):
@@ -227,11 +231,12 @@ class ComparableMixin:
 
     def getConfigDict(self):
         compare_attrs = []
-        reflect.accumulateClassList(
-            self.__class__, 'compare_attrs', compare_attrs)
-        return {k: getattr(self, k)
-                for k in compare_attrs
-                if hasattr(self, k) and k not in ("passwd", "password")}
+        reflect.accumulateClassList(self.__class__, 'compare_attrs', compare_attrs)
+        return {
+            k: getattr(self, k)
+            for k in compare_attrs
+            if hasattr(self, k) and k not in ("passwd", "password")
+        }
 
 
 def diffSets(old, new):
@@ -244,8 +249,9 @@ def diffSets(old, new):
 
 # Remove potentially harmful characters from builder name if it is to be
 # used as the build dir.
-badchars_map = bytes.maketrans(b"\t !#$%&'()*+,./:;<=>?@[\\]^{|}~",
-                               b"______________________________")
+badchars_map = bytes.maketrans(
+    b"\t !#$%&'()*+,./:;<=>?@[\\]^{|}~", b"______________________________"
+)
 
 
 def safeTranslate(s):
@@ -260,26 +266,35 @@ def none_or_str(x):
     return x
 
 
+@overload
+def unicode2bytes(x: str, encoding='utf-8', errors='strict') -> bytes: ...
+
+
+@overload
+def unicode2bytes(x: _T, encoding='utf-8', errors='strict') -> _T: ...
+
+
 def unicode2bytes(x, encoding='utf-8', errors='strict'):
     if isinstance(x, str):
         x = x.encode(encoding, errors)
     return x
 
 
-def bytes2unicode(x, encoding='utf-8', errors='strict'):
+@overload
+def bytes2unicode(x: None, encoding='utf-8', errors='strict') -> None: ...
+
+
+@overload
+def bytes2unicode(x: bytes | str, encoding='utf-8', errors='strict') -> str: ...
+
+
+def bytes2unicode(x: str | bytes | None, encoding='utf-8', errors='strict') -> str | None:
     if isinstance(x, (str, type(None))):
         return x
     return str(x, encoding, errors)
 
 
 _hush_pyflakes = [json]
-
-deprecatedModuleAttribute(
-    Version("buildbot", 0, 9, 4),
-    message="Use json from the standard library instead.",
-    moduleName="buildbot.util",
-    name="json",
-)
 
 
 def toJson(obj):
@@ -293,13 +308,12 @@ def toJson(obj):
 # is always false.
 
 
-class NotABranch:
-
+class _NotABranch:
     def __bool__(self):
         return False
 
 
-NotABranch = NotABranch()
+NotABranch = _NotABranch()
 
 # time-handling methods
 
@@ -359,8 +373,11 @@ def makeList(input):
 
 def in_reactor(f):
     """decorate a function by running it with maybeDeferred in a reactor"""
+
     def wrap(*args, **kwargs):
-        from twisted.internet import reactor, defer
+        from twisted.internet import defer
+        from twisted.internet import reactor
+
         result = []
 
         def _async():
@@ -374,9 +391,11 @@ def in_reactor(f):
             def do_stop(r):
                 result.append(r)
                 reactor.stop()
+
         reactor.callWhenRunning(_async)
         reactor.run()
         return result[0]
+
     wrap.__doc__ = f.__doc__
     wrap.__name__ = f.__name__
     wrap._orig = f  # for tests
@@ -399,6 +418,7 @@ def string2boolean(str):
 def asyncSleep(delay, reactor=None):
     from twisted.internet import defer
     from twisted.internet import reactor as internet_reactor
+
     if reactor is None:
         reactor = internet_reactor
 
@@ -409,14 +429,20 @@ def asyncSleep(delay, reactor=None):
 
 def check_functional_environment(config):
     try:
-        locale.getdefaultlocale()
+        if sys.version_info >= (3, 11, 0):
+            locale.getencoding()
+        else:
+            locale.getdefaultlocale()
     except (KeyError, ValueError) as e:
-        config.error("\n".join([
-            "Your environment has incorrect locale settings. This means python cannot handle "
-            "strings safely.",
-            " Please check 'LANG', 'LC_CTYPE', 'LC_ALL' and 'LANGUAGE'"
-            " are either unset or set to a valid locale.", str(e)
-        ]))
+        config.error(
+            "\n".join([
+                "Your environment has incorrect locale settings. This means python cannot handle "
+                "strings safely.",
+                " Please check 'LANG', 'LC_CTYPE', 'LC_ALL' and 'LANGUAGE'"
+                " are either unset or set to a valid locale.",
+                str(e),
+            ])
+        )
 
 
 _netloc_url_re = re.compile(r':[^@]*@')
@@ -441,17 +467,13 @@ def command_to_string(command):
 
     try:
         len(words)
-    except (AttributeError, TypeError):
+    except TypeError:
         # WithProperties and Property don't have __len__
-        # For old-style classes instances AttributeError raised,
-        # for new-style classes instances - TypeError.
         return None
 
     # flatten any nested lists
     words = flatten(words, (list, tuple))
 
-    # strip instances and other detritus (which can happen if a
-    # description is requested before rendering)
     stringWords = []
     for w in words:
         if isinstance(w, (bytes, str)):
@@ -459,6 +481,8 @@ def command_to_string(command):
             # trying to covert it.
             w = bytes2unicode(w, errors="replace")
             stringWords.append(w)
+        else:
+            stringWords.append(repr(w))
     words = stringWords
 
     if not words:
@@ -495,8 +519,7 @@ def rewrap(text, width=None):
 
     # Split text by lines and group lines that comprise paragraphs.
     wrapped_text = ""
-    for do_wrap, lines in itertools.groupby(text.splitlines(True),
-                                            key=needs_wrapping):
+    for do_wrap, lines in itertools.groupby(text.splitlines(True), key=needs_wrapping):
         paragraph = ''.join(lines)
 
         if do_wrap:
@@ -509,7 +532,7 @@ def rewrap(text, width=None):
 
 def dictionary_merge(a, b):
     """merges dictionary b into a
-       Like dict.update, but recursive
+    Like dict.update, but recursive
     """
     for key, value in b.items():
         if key in a and isinstance(a[key], dict) and isinstance(value, dict):
@@ -520,11 +543,21 @@ def dictionary_merge(a, b):
 
 
 __all__ = [
-    'naturalSort', 'now', 'formatInterval', 'ComparableMixin',
-    'safeTranslate', 'none_or_str',
-    'NotABranch', 'deferredLocked', 'UTC',
-    'diffSets', 'makeList', 'in_reactor', 'string2boolean',
-    'check_functional_environment', 'human_readable_delta',
+    'naturalSort',
+    'now',
+    'formatInterval',
+    'ComparableMixin',
+    'safeTranslate',
+    'none_or_str',
+    'NotABranch',
+    'deferredLocked',
+    'UTC',
+    'diffSets',
+    'makeList',
+    'in_reactor',
+    'string2boolean',
+    'check_functional_environment',
+    'human_readable_delta',
     'rewrap',
     'Notifier',
     "giturlparse",

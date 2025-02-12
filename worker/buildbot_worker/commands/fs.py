@@ -13,17 +13,14 @@
 #
 # Copyright Buildbot Team Members
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 import glob
 import os
+import platform
 import shutil
 import sys
 
 from twisted.internet import defer
 from twisted.internet import threads
-from twisted.python import log
 from twisted.python import runtime
 
 from buildbot_worker import runprocess
@@ -32,7 +29,6 @@ from buildbot_worker.commands import utils
 
 
 class MakeDirectory(base.Command):
-
     header = "mkdir"
 
     # args['paths'] specifies the absolute paths of directories to create
@@ -46,17 +42,16 @@ class MakeDirectory(base.Command):
                 if not os.path.isdir(dirname):
                     os.makedirs(dirname)
             except OSError as e:
-                log.msg("MakeDirectory {0} failed: {1}".format(dirname, e))
+                self.log_msg(f"MakeDirectory {dirname} failed: {e}")
                 self.sendStatus([
-                    ('header', '{0}: {1}: {2}'.format(self.header, e.strerror, dirname)),
-                    ('rc', e.errno)
+                    ('header', f'{self.header}: {e.strerror}: {dirname}'),
+                    ('rc', e.errno),
                 ])
                 return
         self.sendStatus([('rc', 0)])
 
 
 class RemoveDirectory(base.Command):
-
     header = "rmdir"
 
     # args['paths'] specifies the absolute paths of directories or files to remove
@@ -93,10 +88,9 @@ class RemoveDirectory(base.Command):
                 return 0  # rc=0
 
             def eb(f):
-                self.sendStatus([
-                    ('header', 'exception from rmdirRecursive\n' + f.getTraceback())
-                ])
+                self.sendStatus([('header', 'exception from rmdirRecursive\n' + f.getTraceback())])
                 return -1  # rc=-1
+
             d.addCallbacks(cb, eb)
         else:
             d = self._clobber(None, path)
@@ -107,11 +101,18 @@ class RemoveDirectory(base.Command):
     def _clobber(self, dummy, path, chmodDone=False):
         command = ["rm", "-rf", path]
 
-        c = runprocess.RunProcess(command, self.protocol_command.worker_basedir,
-                                  self.protocol_command.unicode_encoding,
-                                  self.protocol_command.send_update,
-                                  sendRC=0, timeout=self.timeout, maxTime=self.maxTime,
-                                  logEnviron=self.logEnviron, usePTY=False)
+        c = runprocess.RunProcess(
+            self.command_id,
+            command,
+            self.protocol_command.worker_basedir,
+            self.protocol_command.unicode_encoding,
+            self.protocol_command.send_update,
+            sendRC=0,
+            timeout=self.timeout,
+            maxTime=self.maxTime,
+            logEnviron=self.logEnviron,
+            usePTY=False,
+        )
 
         self.command = c
         # sendRC=0 means the rm command will send stdout/stderr to the
@@ -123,14 +124,13 @@ class RemoveDirectory(base.Command):
         # permissions and re-try the rm -rf.
         if not chmodDone:
             rc = yield self._tryChmod(rc, path)
-        defer.returnValue(rc)
+        return rc
 
     @defer.inlineCallbacks
     def _tryChmod(self, rc, path):
         assert isinstance(rc, int)
         if rc == 0:
-            defer.returnValue(0)
-            return  # pragma: no cover
+            return 0
         # Attempt a recursive chmod and re-try the rm -rf after.
 
         command = ["chmod", "-Rf", "u+rwx", path]
@@ -140,20 +140,26 @@ class RemoveDirectory(base.Command):
             # permission) by running 'find' instead
             command = ["find", path, '-exec', 'chmod', 'u+rwx', '{}', ';']
 
-        c = runprocess.RunProcess(command, self.protocol_command.worker_basedir,
-                                  self.protocol_command.unicode_encoding,
-                                  self.protocol_command.send_update,
-                                  sendRC=0, timeout=self.timeout, maxTime=self.maxTime,
-                                  logEnviron=self.logEnviron, usePTY=False)
+        c = runprocess.RunProcess(
+            self.command_id,
+            command,
+            self.protocol_command.worker_basedir,
+            self.protocol_command.unicode_encoding,
+            self.protocol_command.send_update,
+            sendRC=0,
+            timeout=self.timeout,
+            maxTime=self.maxTime,
+            logEnviron=self.logEnviron,
+            usePTY=False,
+        )
 
         self.command = c
         rc = yield c.start()
         rc = yield self._clobber(rc, path, True)
-        defer.returnValue(rc)
+        return rc
 
 
 class CopyDirectory(base.Command):
-
     header = "cpdir"
 
     # args['to_path'] and args['from_path'] are relative to Builder directory, and
@@ -181,26 +187,39 @@ class CopyDirectory(base.Command):
             def eb(f):
                 self.sendStatus([('header', 'exception from copytree\n' + f.getTraceback())])
                 return -1  # rc=-1
+
             d.addCallbacks(cb, eb)
 
             @d.addCallback
             def send_rc(rc):
                 self.sendStatus([('rc', rc)])
+
         else:
             if not os.path.exists(os.path.dirname(to_path)):
                 os.makedirs(os.path.dirname(to_path))
             if os.path.exists(to_path):
                 # I don't think this happens, but just in case..
-                log.msg(("cp target '{0}' already exists -- cp will not do what you think!"
-                         ).format(to_path))
+                self.log_msg(
+                    f"cp target '{to_path}' already exists -- cp will not do what you think!"
+                )
 
-            command = ['cp', '-R', '-P', '-p', '-v', from_path, to_path]
-            c = runprocess.RunProcess(command, self.protocol_command.worker_basedir,
-                                      self.protocol_command.unicode_encoding,
-                                      self.protocol_command.send_update,
-                                      sendRC=False, timeout=self.timeout,
-                                      maxTime=self.maxTime, logEnviron=self.logEnviron,
-                                      usePTY=False)
+            if platform.system().lower().find('solaris') >= 0:
+                command = ['cp', '-R', '-P', '-p', from_path, to_path]
+            else:
+                command = ['cp', '-R', '-P', '-p', '-v', from_path, to_path]
+
+            c = runprocess.RunProcess(
+                self.command_id,
+                command,
+                self.protocol_command.worker_basedir,
+                self.protocol_command.unicode_encoding,
+                self.protocol_command.send_update,
+                sendRC=False,
+                timeout=self.timeout,
+                maxTime=self.maxTime,
+                logEnviron=self.logEnviron,
+                usePTY=False,
+            )
             self.command = c
             d = c.start()
             d.addCallback(self._abandonOnFailure)
@@ -210,7 +229,6 @@ class CopyDirectory(base.Command):
 
 
 class StatFile(base.Command):
-
     header = "stat"
 
     # args['path'] absolute path of a file
@@ -223,15 +241,14 @@ class StatFile(base.Command):
             stat = os.stat(filename)
             self.sendStatus([('stat', tuple(stat)), ('rc', 0)])
         except OSError as e:
-            log.msg("StatFile {0} failed: {1}".format(filename, e))
+            self.log_msg(f"StatFile {filename} failed: {e}")
             self.sendStatus([
-                ('header', '{0}: {1}: {2}'.format(self.header, e.strerror, filename)),
-                ('rc', e.errno)
+                ('header', f'{self.header}: {e.strerror}: {filename}'),
+                ('rc', e.errno),
             ])
 
 
 class GlobPath(base.Command):
-
     header = "glob"
 
     # args['path'] shell-style path specification of a pattern
@@ -241,22 +258,17 @@ class GlobPath(base.Command):
         pathname = self.args['path']
 
         try:
-            # recursive matching is only support in python3.5+
-            if sys.version_info[:2] >= (3, 5):
-                files = glob.glob(pathname, recursive=True)
-            else:
-                files = glob.glob(pathname)
+            files = glob.glob(pathname, recursive=True)
             self.sendStatus([('files', files), ('rc', 0)])
         except OSError as e:
-            log.msg("GlobPath {0} failed: {1}".format(pathname, e))
+            self.log_msg(f"GlobPath {pathname} failed: {e}")
             self.sendStatus([
-                ('header', '{0}: {1}: {2}'.format(self.header, e.strerror, pathname)),
-                ('rc', e.errno)
+                ('header', f'{self.header}: {e.strerror}: {pathname}'),
+                ('rc', e.errno),
             ])
 
 
 class ListDir(base.Command):
-
     header = "listdir"
 
     # args['path'] absolute path of the directory to list
@@ -269,15 +281,14 @@ class ListDir(base.Command):
             files = os.listdir(dirname)
             self.sendStatus([('files', files), ('rc', 0)])
         except OSError as e:
-            log.msg("ListDir {0} failed: {1}".format(dirname, e))
+            self.log_msg(f"ListDir {dirname} failed: {e}")
             self.sendStatus([
-                ('header', '{0}: {1}: {2}'.format(self.header, e.strerror, dirname)),
-                ('rc', e.errno)
+                ('header', f'{self.header}: {e.strerror}: {dirname}'),
+                ('rc', e.errno),
             ])
 
 
 class RemoveFile(base.Command):
-
     header = "rmfile"
 
     # args['path'] absolute path of a file to delete
@@ -290,8 +301,8 @@ class RemoveFile(base.Command):
             os.remove(pathname)
             self.sendStatus([('rc', 0)])
         except OSError as e:
-            log.msg("remove file {0} failed: {1}".format(pathname, e))
+            self.log_msg(f"remove file {pathname} failed: {e}")
             self.sendStatus([
-                ('header', '{0}: {1}: {2}'.format(self.header, e.strerror, pathname)),
-                ('rc', e.errno)
+                ('header', f'{self.header}: {e.strerror}: {pathname}'),
+                ('rc', e.errno),
             ])

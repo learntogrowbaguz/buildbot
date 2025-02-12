@@ -12,7 +12,7 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
-
+from __future__ import annotations
 
 from twisted.internet import defer
 from twisted.python import log
@@ -22,7 +22,6 @@ from buildbot.util import eventual
 
 
 class Eventually(unittest.TestCase):
-
     def setUp(self):
         # reset the queue to its base state
         eventual._theSimpleQueue = eventual._SimpleCallQueue()
@@ -37,7 +36,7 @@ class Eventually(unittest.TestCase):
     def cb(self, *args, **kwargs):
         r = args
         if kwargs:
-            r = r + (kwargs,)
+            r = (*r, kwargs)
         self.results.append(r)
 
     # flush the queue and assert results
@@ -55,14 +54,18 @@ class Eventually(unittest.TestCase):
 
     def test_eventually_args(self):
         eventual.eventually(self.cb, 1, 2, a='a')
-        return self.assertResults([(1, 2, dict(a='a'))])
+        return self.assertResults([(1, 2, {"a": 'a'})])
 
     def test_eventually_err(self):
         # monkey-patch log.err; this is restored by tearDown
-        log.err = lambda: self.results.append("err")
+        def cb_err():
+            self.results.append("err")
+
+        log.err = cb_err
 
         def cb_fails():
             raise RuntimeError("should not cause test failure")
+
         eventual.eventually(cb_fails)
         return self.assertResults(['err'])
 
@@ -83,6 +86,7 @@ class Eventually(unittest.TestCase):
             if n <= 0:
                 return
             eventual.eventually(chain, n - 1)
+
         chain(3)
         # (the flush this tests is implicit in assertResults)
         return self.assertResults([3, 2, 1, 0])
@@ -95,6 +99,7 @@ class Eventually(unittest.TestCase):
                 return
             eventual.eventually(tree, n - 1)
             eventual.eventually(tree, n - 1)
+
         tree(2)
         # (the flush this tests is implicit in assertResults)
         return self.assertResults([2, 1, 1, 0, 0, 0, 0])
@@ -105,6 +110,7 @@ class Eventually(unittest.TestCase):
         def cb():
             d = eventual.flushEventualQueue()
             d.addCallback(testd.callback)
+
         eventual.eventually(cb)
         return testd
 

@@ -13,7 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
@@ -28,16 +28,13 @@ class FakeUserManager(service.AsyncMultiService):
 
 
 class TestUserManager(unittest.TestCase):
-
     def setUp(self):
         self.master = mock.Mock()
         self.umm = manager.UserManagerManager(self.master)
         self.umm.startService()
+        self.addCleanup(self.umm.stopService)
 
         self.config = MasterConfig()
-
-    def tearDown(self):
-        self.umm.stopService()
 
     @defer.inlineCallbacks
     def test_reconfigServiceWithBuildbotConfig(self):

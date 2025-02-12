@@ -25,31 +25,32 @@ from buildbot.process import logobserver
 
 
 class RpmBuild(buildstep.ShellMixin, buildstep.BuildStep):
-
     """
     RpmBuild build step.
     """
 
     renderables = ['dist']
     name = "rpmbuilder"
-    haltOnFailure = 1
-    flunkOnFailure = 1
+    haltOnFailure = True
+    flunkOnFailure = True
     description = ["RPMBUILD"]
     descriptionDone = ["RPMBUILD"]
 
-    def __init__(self,
-                 specfile=None,
-                 topdir='`pwd`',
-                 builddir='`pwd`',
-                 rpmdir='`pwd`',
-                 sourcedir='`pwd`',
-                 specdir='`pwd`',
-                 srcrpmdir='`pwd`',
-                 dist='.el6',
-                 define=None,
-                 autoRelease=False,
-                 vcsRevision=False,
-                 **kwargs):
+    def __init__(
+        self,
+        specfile=None,
+        topdir='`pwd`',
+        builddir='`pwd`',
+        rpmdir='`pwd`',
+        sourcedir='`pwd`',
+        specdir='`pwd`',
+        srcrpmdir='`pwd`',
+        dist='.el6',
+        define=None,
+        autoRelease=False,
+        vcsRevision=False,
+        **kwargs,
+    ):
         kwargs = self.setupShellMixin(kwargs, prohibitArgs=['command'])
         super().__init__(**kwargs)
 
@@ -58,7 +59,8 @@ class RpmBuild(buildstep.ShellMixin, buildstep.BuildStep):
         self.base_rpmbuild = (
             f'rpmbuild --define "_topdir {topdir}" --define "_builddir {builddir}"'
             f' --define "_rpmdir {rpmdir}" --define "_sourcedir {sourcedir}"'
-            f' --define "_specdir {specdir}" --define "_srcrpmdir {srcrpmdir}"')
+            f' --define "_specdir {specdir}" --define "_srcrpmdir {srcrpmdir}"'
+        )
 
         if define is None:
             define = {}
@@ -72,21 +74,19 @@ class RpmBuild(buildstep.ShellMixin, buildstep.BuildStep):
         if not self.specfile:
             config.error("You must specify a specfile")
 
-        self.addLogObserver(
-            'stdio', logobserver.LineConsumerLogObserver(self.logConsumer))
+        self.addLogObserver('stdio', logobserver.LineConsumerLogObserver(self.logConsumer))
 
     @defer.inlineCallbacks
     def run(self):
-
         rpm_extras_dict = {}
         rpm_extras_dict['dist'] = self.dist
 
         if self.autoRelease:
             relfile = f"{os.path.basename(self.specfile).split('.')[0]}.release"
             try:
-                with open(relfile, 'r', encoding='utf-8') as rfile:
+                with open(relfile, encoding='utf-8') as rfile:
                     rel = int(rfile.readline().strip())
-            except (IOError, TypeError, ValueError):
+            except (OSError, TypeError, ValueError):
                 rel = 0
             rpm_extras_dict['_release'] = rel
             with open(relfile, 'w', encoding='utf-8') as rfile:
@@ -121,9 +121,16 @@ class RpmBuild(buildstep.ShellMixin, buildstep.BuildStep):
         return cmd.results()
 
     def logConsumer(self):
-        rpm_prefixes = ['Provides:', 'Requires(', 'Requires:',
-                        'Checking for unpackaged', 'Wrote:',
-                        'Executing(%', '+ ', 'Processing files:']
+        rpm_prefixes = [
+            'Provides:',
+            'Requires(',
+            'Requires:',
+            'Checking for unpackaged',
+            'Wrote:',
+            'Executing(%',
+            '+ ',
+            'Processing files:',
+        ]
         rpm_err_pfx = ['   ', 'RPM build errors:', 'error: ']
         self.rpmcmdlog = []
         self.rpmerrors = []

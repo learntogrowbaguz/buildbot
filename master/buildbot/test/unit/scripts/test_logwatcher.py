@@ -14,8 +14,7 @@
 # Copyright Buildbot Team Members
 
 import os
-
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
@@ -42,13 +41,11 @@ class MockedLogWatcher(LogWatcher):
         self.printed_output.append(output)
 
 
-class TestLogWatcher(unittest.TestCase, dirs.DirsMixin, TestReactorMixin):
-
+class TestLogWatcher(dirs.DirsMixin, TestReactorMixin, unittest.TestCase):
     delimiter = unicode2bytes(os.linesep)
 
     def setUp(self):
         self.setUpDirs('workdir')
-        self.addCleanup(self.tearDownDirs)
 
         self.setup_test_reactor()
         self.spawned_process = mock.Mock()
@@ -96,12 +93,13 @@ class TestLogWatcher(unittest.TestCase, dirs.DirsMixin, TestReactorMixin):
     def test_handles_very_long_lines(self):
         lw = MockedLogWatcher('workdir/test.log', timeout=5, _reactor=self.reactor)
         d = lw.start()
-        lw.dataReceived(b't' * lw.MAX_LENGTH * 2 + self.delimiter + b'BuildMaster is running' +
-                        self.delimiter)
+        lw.dataReceived(
+            b't' * lw.MAX_LENGTH * 2 + self.delimiter + b'BuildMaster is running' + self.delimiter
+        )
         res = yield d
-        self.assertEqual(lw.printed_output, [
-            'Got an a very long line in the log (length 32768 bytes), ignoring'
-        ])
+        self.assertEqual(
+            lw.printed_output, ['Got an a very long line in the log (length 32768 bytes), ignoring']
+        )
         self.assertEqual(res, 'buildmaster')
 
     @defer.inlineCallbacks
@@ -111,9 +109,9 @@ class TestLogWatcher(unittest.TestCase, dirs.DirsMixin, TestReactorMixin):
         lw.dataReceived(b't' * lw.MAX_LENGTH * 2)
         lw.dataReceived(self.delimiter + b'BuildMaster is running' + self.delimiter)
         res = yield d
-        self.assertEqual(lw.printed_output, [
-            'Got an a very long line in the log (length 32768 bytes), ignoring'
-        ])
+        self.assertEqual(
+            lw.printed_output, ['Got an a very long line in the log (length 32768 bytes), ignoring']
+        )
         self.assertEqual(res, 'buildmaster')
 
     @defer.inlineCallbacks
@@ -123,17 +121,19 @@ class TestLogWatcher(unittest.TestCase, dirs.DirsMixin, TestReactorMixin):
         lw.dataReceived(b't' * lw.MAX_LENGTH * 2 + self.delimiter)
         lw.dataReceived(b'BuildMaster is running' + self.delimiter)
         res = yield d
-        self.assertEqual(lw.printed_output, [
-            'Got an a very long line in the log (length 32768 bytes), ignoring'
-        ])
+        self.assertEqual(
+            lw.printed_output, ['Got an a very long line in the log (length 32768 bytes), ignoring']
+        )
         self.assertEqual(res, 'buildmaster')
 
     @defer.inlineCallbacks
     def test_matches_lines(self):
         lines_and_expected = [
             (b'configuration update aborted without making any changes', ReconfigError()),
-            (b'WARNING: configuration update partially applied; master may malfunction',
-             ReconfigError()),
+            (
+                b'WARNING: configuration update partially applied; master may malfunction',
+                ReconfigError(),
+            ),
             (b'Server Shut Down', ReconfigError()),
             (b'BuildMaster startup failed', BuildmasterStartupError()),
             (b'message from master: attached', 'worker'),
