@@ -42,33 +42,37 @@ class Trigger(BuildStep):
         'set_properties',
         'sourceStamps',
         'updateSourceStamp',
-        'waitForFinish'
+        'waitForFinish',
     ]
 
     flunkOnFailure = True
 
-    def __init__(self, schedulerNames=None, sourceStamp=None, sourceStamps=None,
-                 updateSourceStamp=None, alwaysUseLatest=False,
-                 waitForFinish=False, set_properties=None,
-                 copy_properties=None, parent_relationship="Triggered from",
-                 unimportantSchedulerNames=None, **kwargs):
+    def __init__(
+        self,
+        schedulerNames=None,
+        sourceStamp=None,
+        sourceStamps=None,
+        updateSourceStamp=None,
+        alwaysUseLatest=False,
+        waitForFinish=False,
+        set_properties=None,
+        copy_properties=None,
+        parent_relationship="Triggered from",
+        unimportantSchedulerNames=None,
+        **kwargs,
+    ):
         if schedulerNames is None:
             schedulerNames = []
         if unimportantSchedulerNames is None:
             unimportantSchedulerNames = []
         if not schedulerNames:
-            config.error(
-                "You must specify a scheduler to trigger")
+            config.error("You must specify a scheduler to trigger")
         if (sourceStamp or sourceStamps) and (updateSourceStamp is not None):
-            config.error(
-                "You can't specify both sourceStamps and updateSourceStamp")
+            config.error("You can't specify both sourceStamps and updateSourceStamp")
         if (sourceStamp or sourceStamps) and alwaysUseLatest:
-            config.error(
-                "You can't specify both sourceStamps and alwaysUseLatest")
+            config.error("You can't specify both sourceStamps and alwaysUseLatest")
         if alwaysUseLatest and (updateSourceStamp is not None):
-            config.error(
-                "You can't specify both alwaysUseLatest and updateSourceStamp"
-            )
+            config.error("You can't specify both alwaysUseLatest and updateSourceStamp")
 
         def hasRenderable(l):
             for s in l:
@@ -78,9 +82,7 @@ class Trigger(BuildStep):
 
         if not hasRenderable(schedulerNames) and not hasRenderable(unimportantSchedulerNames):
             if not set(schedulerNames).issuperset(set(unimportantSchedulerNames)):
-                config.error(
-                    "unimportantSchedulerNames must be a subset of schedulerNames"
-                )
+                config.error("unimportantSchedulerNames must be a subset of schedulerNames")
 
         self.schedulerNames = schedulerNames
         self.unimportantSchedulerNames = unimportantSchedulerNames
@@ -121,10 +123,9 @@ class Trigger(BuildStep):
         # Note that there is an identified race condition though (more details
         # are available at buildbot.data.buildrequests).
         for brid in self.brids:
-            self.master.data.control("cancel",
-                                     {'reason':
-                                         'parent build was interrupted'},
-                                     ("buildrequests", brid))
+            self.master.data.control(
+                "cancel", {'reason': 'parent build was interrupted'}, ("buildrequests", brid)
+            )
         if self.running and not self.ended:
             self.ended = True
             # if we are interrupted because of a connection lost, we interrupt synchronously
@@ -144,21 +145,23 @@ class Trigger(BuildStep):
         # this allow to quickly find schedulers instance by name
         schedulers = self.master.scheduler_manager.namedServices
         if name not in schedulers:
-            raise ValueError(f"unknown triggered scheduler: {repr(name)}")
+            raise ValueError(f"unknown triggered scheduler: {name!r}")
         sch = schedulers[name]
         if not ITriggerableScheduler.providedBy(sch):
-            raise ValueError(
-                f"triggered scheduler is not ITriggerableScheduler: {repr(name)}")
+            raise ValueError(f"triggered scheduler is not ITriggerableScheduler: {name!r}")
         return sch
 
     # This customization endpoint allows users to dynamically select which
     # scheduler and properties to trigger
     def getSchedulersAndProperties(self):
-        return [{
-            'sched_name': sched,
-            'props_to_set': self.set_properties,
-            'unimportant': sched in self.unimportantSchedulerNames}
-            for sched in self.schedulerNames]
+        return [
+            {
+                'sched_name': sched,
+                'props_to_set': self.set_properties,
+                'unimportant': sched in self.unimportantSchedulerNames,
+            }
+            for sched in self.schedulerNames
+        ]
 
     def prepareSourcestampListForTrigger(self):
         if self.sourceStamps:
@@ -227,30 +230,31 @@ class Trigger(BuildStep):
                 for builderid, br in brids.items():
                     builds = yield self.master.db.builds.getBuilds(buildrequestid=br)
                     for build in builds:
-                        builderid = build['builderid']
+                        builderid = build.builderid
                         # When virtual builders are used, the builderid used for triggering
                         # is not the same as the one that the build actually got
                         if builderid not in builderNames:
                             builderDict = yield self.master.data.get(("builders", builderid))
                             builderNames[builderid] = builderDict["name"]
-                        num = build['number']
+                        num = build.number
                         url = getURLForBuild(self.master, builderid, num)
-                        yield self.addURL(f'{statusToString(build["results"])}: '
-                                          f'{builderNames[builderid]} #{num}',
-                                          url)
+                        yield self.addURL(
+                            f'{statusToString(build.results)}: {builderNames[builderid]} #{num}',
+                            url,
+                        )
 
     @defer.inlineCallbacks
     def _add_results(self, brid):
         @defer.inlineCallbacks
         def _is_buildrequest_complete(brid):
             buildrequest = yield self.master.db.buildrequests.getBuildRequest(brid)
-            return buildrequest['complete']
+            return buildrequest.complete
 
         event = ('buildrequests', str(brid), 'complete')
         yield self.master.mq.waitUntilEvent(event, lambda: _is_buildrequest_complete(brid))
         builds = yield self.master.db.builds.getBuilds(buildrequestid=brid)
         for build in builds:
-            self._result_list.append(build["results"])
+            self._result_list.append(build.results)
         self.updateSummary()
 
     @defer.inlineCallbacks
@@ -268,20 +272,19 @@ class Trigger(BuildStep):
                 break
             # Old-style back compatibility: Convert tuple to dict and make
             # it important
-            d = {
-                'sched_name': element[0],
-                'props_to_set': element[1],
-                'unimportant': False
-            }
+            d = {'sched_name': element[0], 'props_to_set': element[1], 'unimportant': False}
             schedulers_and_props_list.append(d)
 
         # post process the schedulernames, and raw properties
         # we do this out of the loop, as this can result in errors
-        schedulers_and_props = [(
-            self.getSchedulerByName(entry_dict['sched_name']),
-            self.createTriggerProperties(entry_dict['props_to_set']),
-            entry_dict['unimportant'])
-            for entry_dict in schedulers_and_props_list]
+        schedulers_and_props = [
+            (
+                self.getSchedulerByName(entry_dict['sched_name']),
+                self.createTriggerProperties(entry_dict['props_to_set']),
+                entry_dict['unimportant'],
+            )
+            for entry_dict in schedulers_and_props_list
+        ]
 
         ss_for_trigger = self.prepareSourcestampListForTrigger()
 
@@ -294,10 +297,11 @@ class Trigger(BuildStep):
 
         for sch, props_to_set, unimportant in schedulers_and_props:
             idsDeferred, resultsDeferred = sch.trigger(
-                waited_for=self.waitForFinish, sourcestamps=ss_for_trigger,
+                waited_for=self.waitForFinish,
+                sourcestamps=ss_for_trigger,
                 set_props=props_to_set,
                 parent_buildid=self.build.buildid,
-                parent_relationship=self.parent_relationship
+                parent_relationship=self.parent_relationship,
             )
             # we are not in a hurry of starting all in parallel and managing
             # the deferred lists, just let the db writes be serial.
@@ -325,7 +329,7 @@ class Trigger(BuildStep):
         self.triggeredNames = triggeredNames
 
         if self.waitForFinish:
-            self.waitForFinishDeferred = defer.DeferredList(dl, consumeErrors=1)
+            self.waitForFinishDeferred = defer.DeferredList(dl, consumeErrors=True)
             try:
                 rclist = yield self.waitForFinishDeferred
             except defer.CancelledError:
@@ -338,8 +342,7 @@ class Trigger(BuildStep):
         else:
             # do something to handle errors
             for d in dl:
-                d.addErrback(log.err,
-                             '(ignored) while invoking Triggerable schedulers:')
+                d.addErrback(log.err, '(ignored) while invoking Triggerable schedulers:')
 
         return results
 
@@ -356,6 +359,7 @@ class Trigger(BuildStep):
             for status in ALL_RESULTS:
                 count = self._result_list.count(status)
                 if count:
-                    summary = summary + (f", {self._result_list.count(status)} "
-                        f"{statusToString(status, count)}")
+                    summary = summary + (
+                        f", {self._result_list.count(status)} {statusToString(status, count)}"
+                    )
         return {'step': f"triggered {', '.join(self.triggeredNames)}{summary}"}

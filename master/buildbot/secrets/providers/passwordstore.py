@@ -16,6 +16,8 @@
 password store based provider
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
@@ -30,7 +32,8 @@ class SecretInPass(SecretProviderBase):
     """
     secret is stored in a password store
     """
-    name = "SecretInPass"
+
+    name: str | None = "SecretInPass"  # type: ignore[assignment]
 
     def checkPassIsInPath(self):
         if not any((Path(p) / "pass").is_file() for p in os.environ["PATH"].split(":")):
@@ -58,11 +61,15 @@ class SecretInPass(SecretProviderBase):
         get the value from pass identified by 'entry'
         """
         try:
-            rc, output = yield runprocess.run_process(self.master.reactor,
-                                                      ['pass', entry], env=self._env,
-                                                      collect_stderr=False, stderr_is_error=True)
+            rc, output = yield runprocess.run_process(
+                self.master.reactor,
+                ['pass', entry],
+                env=self._env,
+                collect_stderr=False,
+                stderr_is_error=True,
+            )
             if rc != 0:
                 return None
             return output.decode("utf-8", "ignore").splitlines()[0]
-        except IOError:
+        except OSError:
             return None

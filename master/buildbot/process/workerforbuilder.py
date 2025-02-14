@@ -13,29 +13,36 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
+import enum
+from typing import TYPE_CHECKING
 
 from twisted.internet import defer
 from twisted.python import log
-from twisted.python.constants import NamedConstant
-from twisted.python.constants import Names
+
+if TYPE_CHECKING:
+    from buildbot.process.builder import Builder
+    from buildbot.worker.base import AbstractWorker
+    from buildbot.worker.latent import AbstractLatentWorker
 
 
-class States(Names):
+class States(enum.Enum):
     # The worker isn't attached, or is in the process of attaching.
-    DETACHED = NamedConstant()
+    DETACHED = 0
     # The worker is available to build: either attached, or a latent worker.
-    AVAILABLE = NamedConstant()
+    AVAILABLE = 1
     # The worker is building.
-    BUILDING = NamedConstant()
+    BUILDING = 2
 
 
 class AbstractWorkerForBuilder:
-
-    def __init__(self):
-        self.ping_watchers = []
-        self.state = None  # set in subclass
-        self.worker = None
-        self.builder_name = None
+    def __init__(self, builder: Builder):
+        self.ping_watchers: list[defer.Deferred] = []
+        self.state: States | None = None  # set in subclass
+        self.worker: AbstractWorker | None = None
+        self.builder = builder
+        self.builder_name = builder.name
         self.locks = None
 
     def __repr__(self):
@@ -46,10 +53,6 @@ class AbstractWorkerForBuilder:
             r.extend([" worker=", repr(self.worker.workername)])
         r.extend([" state=", self.state.name, ">"])
         return ''.join(r)
-
-    def setBuilder(self, b):
-        self.builder = b
-        self.builder_name = b.name
 
     def getWorkerCommandVersion(self, command, oldversion=None):
         if self.remoteCommands is None:
@@ -82,7 +85,7 @@ class AbstractWorkerForBuilder:
             self.worker.buildFinished(self)
 
     @defer.inlineCallbacks
-    def attached(self, worker, commands):
+    def attached(self, worker: AbstractWorker, commands):
         """
         @type  worker: L{buildbot.worker.Worker}
         @param worker: the Worker that represents the worker as a whole
@@ -118,12 +121,14 @@ class AbstractWorkerForBuilder:
         return d
 
     def abortPingIfAny(self):
-        watchers, self.ping_watchers = self.ping_watchers, []
+        watchers = self.ping_watchers
+        self.ping_watchers = []
         for d in watchers:
             d.errback(PingException('aborted ping'))
 
     def _pong(self, res):
-        watchers, self.ping_watchers = self.ping_watchers, []
+        watchers = self.ping_watchers
+        self.ping_watchers = []
         for d in watchers:
             d.callback(res)
 
@@ -152,9 +157,9 @@ class Ping:
         self.d = defer.Deferred()
         # TODO: add a distinct 'ping' command on the worker.. using 'print'
         # for this purpose is kind of silly.
-        conn.remotePrint(message="ping").addCallbacks(self._pong,
-                                                      self._ping_failed,
-                                                      errbackArgs=(conn,))
+        conn.remotePrint(message="ping").addCallbacks(
+            self._pong, self._ping_failed, errbackArgs=(conn,)
+        )
         return self.d
 
     def _pong(self, res):
@@ -171,9 +176,8 @@ class Ping:
 
 
 class WorkerForBuilder(AbstractWorkerForBuilder):
-
-    def __init__(self):
-        super().__init__()
+    def __init__(self, builder: Builder):
+        super().__init__(builder)
         self.state = States.DETACHED
 
     @defer.inlineCallbacks
@@ -193,12 +197,10 @@ class WorkerForBuilder(AbstractWorkerForBuilder):
 
 
 class LatentWorkerForBuilder(AbstractWorkerForBuilder):
-
-    def __init__(self, worker, builder):
-        super().__init__()
-        self.worker = worker
+    def __init__(self, worker: AbstractLatentWorker, builder: Builder):
+        super().__init__(builder)
+        self.worker: AbstractLatentWorker | None = worker
         self.state = States.AVAILABLE
-        self.setBuilder(builder)
         self.worker.addWorkerForBuilder(self)
         log.msg(f"Latent worker {worker.workername} attached to {self.builder_name}")
 
@@ -208,7 +210,8 @@ class LatentWorkerForBuilder(AbstractWorkerForBuilder):
         return d
 
     def insubstantiate_if_needed(self):
-        self.worker.insubstantiate()
+        if self.worker:
+            self.worker.insubstantiate()
 
     def attached(self, worker, commands):
         # When a latent worker is attached, it is actually because it prepared for a build
@@ -218,7 +221,9 @@ class LatentWorkerForBuilder(AbstractWorkerForBuilder):
         return super().attached(worker, commands)
 
     def substantiate(self, build):
-        return self.worker.substantiate(self, build)
+        if self.worker:
+            return self.worker.substantiate(self, build)
+        return defer.succeed(False)
 
     def ping(self):
         if not self.worker.substantiated:

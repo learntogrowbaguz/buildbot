@@ -13,6 +13,8 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
 import re
 
 from twisted.internet import defer
@@ -23,7 +25,7 @@ from buildbot.util import lineboundaries
 
 
 class Log:
-    _byType = {}
+    _byType: dict[str, type[Log]] = {}
 
     def __init__(self, master, name, type, logid, decoder):
         self.type = type
@@ -31,11 +33,10 @@ class Log:
         self.master = master
         self.name = name
 
-        self.subPoint = util.subscription.SubscriptionPoint(f"{repr(name)} log")
+        self.subPoint = util.subscription.SubscriptionPoint(f"{name!r} log")
         self.subscriptions = {}
         self._finishing = False
         self.finished = False
-        self.finishWaiters = []
         self._had_errors = False
         self.lock = defer.DeferredLock()
         self.decoder = decoder
@@ -58,16 +59,16 @@ class Log:
         try:
             subcls = cls._byType[type]
         except KeyError as e:
-            raise RuntimeError(f"Invalid log type {repr(type)}") from e
+            raise RuntimeError(f"Invalid log type {type!r}") from e
         decoder = Log._decoderFromString(logEncoding)
         return subcls(master, name, type, logid, decoder)
 
-    def getName(self):
+    def getName(self) -> str:
         return self.name
 
     # subscriptions
 
-    def subscribe(self, callback):
+    def subscribe(self, callback) -> util.subscription.Subscription:
         return self.subPoint.subscribe(callback)
 
     # adding lines
@@ -82,19 +83,11 @@ class Log:
 
     # completion
 
-    def isFinished(self):
-        return self.finished
-
-    def waitUntilFinished(self):
-        d = defer.Deferred()
-        if self.finished:
-            d.succeed(None)
-        else:
-            self.finishWaiters.append(d)
-        return d
-
-    def had_errors(self):
+    def had_errors(self) -> bool:
         return self._had_errors
+
+    def flush(self):
+        return defer.succeed(None)
 
     @defer.inlineCallbacks
     def finish(self):
@@ -105,15 +98,12 @@ class Log:
         def fToRun():
             self.finished = True
             return self.master.data.updates.finishLog(self.logid)
+
         yield self.lock.run(fToRun)
         # notify subscribers *after* finishing the log
         self.subPoint.deliver(None, None)
 
         yield self.subPoint.waitForDeliveriesToFinish()
-
-        # notify those waiting for finish
-        for d in self.finishWaiters:
-            d.callback(None)
 
         self._had_errors = len(self.subPoint.pop_exceptions()) > 0
 
@@ -121,17 +111,17 @@ class Log:
         # it to complete
         d = self.master.data.updates.compressLog(self.logid)
         d.addErrback(log.err, f"while compressing log {self.logid} (ignored)")
+        self.master.db.run_db_task(d)
         self._finishing = False
 
 
 class PlainLog(Log):
-
     def __init__(self, master, name, type, logid, decoder):
         super().__init__(master, name, type, logid, decoder)
 
         self.lbf = lineboundaries.LineBoundaryFinder()
 
-    def addContent(self, text):
+    def addContent(self, text: str | bytes):
         if not isinstance(text, str):
             text = self.decoder(text)
         # add some text in the log's default stream
@@ -142,16 +132,19 @@ class PlainLog(Log):
         return self.addRawLines(lines)
 
     @defer.inlineCallbacks
-    def finish(self):
+    def flush(self):
         lines = self.lbf.flush()
         if lines is not None:
             self.subPoint.deliver(None, lines)
             yield self.addRawLines(lines)
+
+    @defer.inlineCallbacks
+    def finish(self):
+        yield self.flush()
         yield super().finish()
 
 
 class TextLog(PlainLog):
-
     pass
 
 
@@ -159,7 +152,6 @@ Log._byType['t'] = TextLog
 
 
 class HtmlLog(PlainLog):
-
     pass
 
 
@@ -167,7 +159,6 @@ Log._byType['h'] = HtmlLog
 
 
 class StreamLog(Log):
-
     pat = re.compile('^', re.M)
 
     def __init__(self, step, name, type, logid, decoder):
@@ -225,12 +216,16 @@ class StreamLog(Log):
             text = self.decoder(text)
         return self._on_whole_lines('h', text)
 
-    @defer.inlineCallbacks
-    def finish(self):
+    def flush(self):
         for stream, lbf in self.lbfs.items():
             lines = lbf.flush()
             if lines is not None:
                 self._on_whole_lines(stream, lines)
+        return defer.succeed(None)
+
+    @defer.inlineCallbacks
+    def finish(self):
+        yield self.flush()
         yield super().finish()
 
 

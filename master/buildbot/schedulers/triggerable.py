@@ -13,6 +13,10 @@
 #
 # Copyright Buildbot Team Members
 
+from typing import Any
+from typing import ClassVar
+from typing import Sequence
+
 from twisted.internet import defer
 from twisted.python import failure
 from zope.interface import implementer
@@ -24,18 +28,38 @@ from buildbot.util import debounce
 
 
 @implementer(ITriggerableScheduler)
-class Triggerable(base.BaseScheduler):
+class Triggerable(base.ReconfigurableBaseScheduler):
+    compare_attrs: ClassVar[Sequence[str]] = (
+        *base.ReconfigurableBaseScheduler.compare_attrs,
+        'reason',
+    )
 
-    compare_attrs = base.BaseScheduler.compare_attrs + ('reason',)
-
-    def __init__(self, name, builderNames, reason=None, **kwargs):
-        super().__init__(name, builderNames, **kwargs)
+    def __init__(self, name, builderNames, *args, **kwargs):
+        super().__init__(*args, name=name, builderNames=builderNames, **kwargs)
         self._waiters = {}
         self._buildset_complete_consumer = None
+
+    def checkConfig(self, builderNames, reason=None, **kwargs: Any):  # type: ignore[override]
+        super().checkConfig(builderNames=builderNames, **kwargs)
+
+    @defer.inlineCallbacks
+    def reconfigService(  # type: ignore[override]
+        self,
+        builderNames,
+        reason=None,
+        **kwargs: Any,
+    ):
+        yield super().reconfigService(builderNames=builderNames, **kwargs)
         self.reason = reason
 
-    def trigger(self, waited_for, sourcestamps=None, set_props=None,
-                parent_buildid=None, parent_relationship=None):
+    def trigger(
+        self,
+        waited_for,
+        sourcestamps=None,
+        set_props=None,
+        parent_buildid=None,
+        parent_relationship=None,
+    ):
         """Trigger this scheduler with the optional given list of sourcestamps
         Returns two deferreds:
             idsDeferred -- yields the ids of the buildset and buildrequest, as soon as they are
@@ -59,10 +83,13 @@ class Triggerable(base.BaseScheduler):
         # this process.
         idsDeferred = self.addBuildsetForSourceStampsWithDefaults(
             reason,
-            sourcestamps, waited_for,
+            sourcestamps,
+            waited_for,
+            priority=self.priority,
             properties=props,
             parent_buildid=parent_buildid,
-            parent_relationship=parent_relationship)
+            parent_relationship=parent_relationship,
+        )
 
         resultsDeferred = defer.Deferred()
 
@@ -105,8 +132,8 @@ class Triggerable(base.BaseScheduler):
         if self._waiters and not self._buildset_complete_consumer:
             startConsuming = self.master.mq.startConsuming
             self._buildset_complete_consumer = yield startConsuming(
-                self._buildset_complete_cb,
-                ('buildsets', None, 'complete'))
+                self._buildset_complete_cb, ('buildsets', None, 'complete')
+            )
         elif not self._waiters and self._buildset_complete_consumer:
             self._buildset_complete_consumer.stopConsuming()
             self._buildset_complete_consumer = None

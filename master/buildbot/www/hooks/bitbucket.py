@@ -18,7 +18,6 @@
 import json
 
 from dateutil.parser import parse as dateparse
-
 from twisted.python import log
 
 from buildbot.util import bytes2unicode
@@ -28,7 +27,6 @@ _HEADER_EVENT = b'X-Event-Key'
 
 
 class BitBucketHandler(BaseHookHandler):
-
     def getChanges(self, request):
         """Catch a POST request from BitBucket and start a build process
 

@@ -15,6 +15,8 @@
 
 import os
 import time
+from typing import ClassVar
+from typing import Sequence
 
 from twisted.internet import defer
 from twisted.python import log
@@ -28,13 +30,24 @@ from buildbot.util.state import StateMixin
 
 
 class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
-
     """This source will poll a remote hg repo for changes and submit
     them to the change master."""
 
-    compare_attrs = ("repourl", "branch", "branches", "bookmarks", "workdir", "pollInterval",
-                     "hgpoller", "usetimestamps", "category", "project", "pollAtLaunch",
-                     "pollRandomDelayMin", "pollRandomDelayMax")
+    compare_attrs: ClassVar[Sequence[str]] = (
+        "repourl",
+        "branch",
+        "branches",
+        "bookmarks",
+        "workdir",
+        "pollInterval",
+        "hgpoller",
+        "usetimestamps",
+        "category",
+        "project",
+        "pollAtLaunch",
+        "pollRandomDelayMin",
+        "pollRandomDelayMax",
+    )
 
     db_class_name = 'HgPoller'
 
@@ -48,16 +61,25 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
 
         super().__init__(repourl, **kwargs)
 
-    def checkConfig(self, repourl, branch=None, branches=None, bookmarks=None, workdir=None,
-                    pollInterval=10 * 60, hgbin="hg", usetimestamps=True, category=None,
-                    project="", pollinterval=-2, encoding="utf-8", name=None,
-                    pollAtLaunch=False, revlink=lambda branch, revision: (""),
-                    pollRandomDelayMin=0, pollRandomDelayMax=0):
-
-        # for backward compatibility; the parameter used to be spelled with 'i'
-        if pollinterval != -2:
-            pollInterval = pollinterval
-
+    def checkConfig(
+        self,
+        repourl,
+        branch=None,
+        branches=None,
+        bookmarks=None,
+        workdir=None,
+        pollInterval=10 * 60,
+        hgbin="hg",
+        usetimestamps=True,
+        category=None,
+        project="",
+        encoding="utf-8",
+        name=None,
+        pollAtLaunch=False,
+        revlink=lambda branch, revision: (""),
+        pollRandomDelayMin=0,
+        pollRandomDelayMax=0,
+    ):
         if branch and branches:
             config.error("HgPoller: can't specify both branch and branches")
 
@@ -69,21 +91,34 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
 
         name = self.build_name(name, repourl, bookmarks, self.build_branches(branch, branches))
 
-        super().checkConfig(name=name, pollInterval=pollInterval, pollAtLaunch=pollAtLaunch,
-                            pollRandomDelayMin=pollRandomDelayMin,
-                            pollRandomDelayMax=pollRandomDelayMax)
+        super().checkConfig(
+            name=name,
+            pollInterval=pollInterval,
+            pollAtLaunch=pollAtLaunch,
+            pollRandomDelayMin=pollRandomDelayMin,
+            pollRandomDelayMax=pollRandomDelayMax,
+        )
 
     @defer.inlineCallbacks
-    def reconfigService(self, repourl, branch=None, branches=None, bookmarks=None, workdir=None,
-                        pollInterval=10 * 60, hgbin="hg", usetimestamps=True, category=None,
-                        project="", pollinterval=-2, encoding="utf-8", name=None,
-                        pollAtLaunch=False, revlink=lambda branch, revision: (""),
-                        pollRandomDelayMin=0, pollRandomDelayMax=0):
-
-        # for backward compatibility; the parameter used to be spelled with 'i'
-        if pollinterval != -2:
-            pollInterval = pollinterval
-
+    def reconfigService(
+        self,
+        repourl,
+        branch=None,
+        branches=None,
+        bookmarks=None,
+        workdir=None,
+        pollInterval=10 * 60,
+        hgbin="hg",
+        usetimestamps=True,
+        category=None,
+        project="",
+        encoding="utf-8",
+        name=None,
+        pollAtLaunch=False,
+        revlink=lambda branch, revision: (""),
+        pollRandomDelayMin=0,
+        pollRandomDelayMax=0,
+    ):
         self.repourl = repourl
 
         self.branches = self.build_branches(branch, branches)
@@ -100,16 +135,18 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
         self.hgbin = hgbin
         self.workdir = workdir
         self.usetimestamps = usetimestamps
-        self.category = category if callable(
-            category) else bytes2unicode(category)
+        self.category = category if callable(category) else bytes2unicode(category)
         self.project = project
         self.lastRev = {}
         self.revlink_callable = revlink
 
-        yield super().reconfigService(name=name, pollInterval=pollInterval,
-                                      pollAtLaunch=pollAtLaunch,
-                                      pollRandomDelayMin=pollRandomDelayMin,
-                                      pollRandomDelayMax=pollRandomDelayMax)
+        yield super().reconfigService(
+            name=name,
+            pollInterval=pollInterval,
+            pollAtLaunch=pollAtLaunch,
+            pollRandomDelayMin=pollRandomDelayMin,
+            pollRandomDelayMax=pollRandomDelayMax,
+        )
 
     def build_name(self, name, repourl, bookmarks, branches):
         if name is not None:
@@ -136,8 +173,10 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
         status = ""
         if not self.master:
             status = "[STOPPED - check log]"
-        return (f"HgPoller watching the remote Mercurial repository '{self.repourl}', "
-                f"branches: {', '.join(self.branches)}, in workdir '{self.workdir}' {status}")
+        return (
+            f"HgPoller watching the remote Mercurial repository '{self.repourl}', "
+            f"branches: {', '.join(self.branches)}, in workdir '{self.workdir}' {status}"
+        )
 
     @deferredLocked('initLock')
     @defer.inlineCallbacks
@@ -158,20 +197,30 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
         Deferred will be in error if rev is unknown.
         """
         command = [
-            self.hgbin, 'log', '-r', rev, os.linesep.join((
-            '--template={date|hgdate}',
-            '{author}',
-            "{files % '{file}" + os.pathsep + "'}",
-            '{desc|strip}'))]
+            self.hgbin,
+            'log',
+            '-r',
+            rev,
+            os.linesep.join((
+                '--template={date|hgdate}',
+                '{author}',
+                "{files % '{file}" + os.pathsep + "'}",
+                '{desc|strip}',
+            )),
+        ]
 
         # Mercurial fails with status 255 if rev is unknown
-        rc, output = yield runprocess.run_process(self.master.reactor,
-                                                  command, workdir=self._absWorkdir(),
-                                                  env=os.environ, collect_stderr=False,
-                                                  stderr_is_error=True)
+        rc, output = yield runprocess.run_process(
+            self.master.reactor,
+            command,
+            workdir=self._absWorkdir(),
+            env=os.environ,
+            collect_stderr=False,
+            stderr_is_error=True,
+        )
         if rc != 0:
             msg = f'{self}: got error {rc} when getting details for revision {rev}'
-            raise Exception(msg)
+            raise RuntimeError(msg)
 
         # all file names are on one line
         output = output.decode(self.encoding, "replace")
@@ -183,7 +232,7 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
             try:
                 stamp = float(date.split()[0])
             except Exception:
-                log.msg(f'hgpoller: caught exception converting output {repr(date)} to timestamp')
+                log.msg(f'hgpoller: caught exception converting output {date!r} to timestamp')
                 raise
         return stamp, author.strip(), files.split(os.pathsep)[:-1], comments.strip()
 
@@ -201,14 +250,17 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
             return
         log.msg(f'hgpoller: initializing working dir from {self.repourl}')
 
-        rc = yield runprocess.run_process(self.master.reactor,
-                                          [self.hgbin, 'init', self._absWorkdir()],
-                                          env=os.environ, collect_stdout=False,
-                                          collect_stderr=False)
+        rc = yield runprocess.run_process(
+            self.master.reactor,
+            [self.hgbin, 'init', self._absWorkdir()],
+            env=os.environ,
+            collect_stdout=False,
+            collect_stderr=False,
+        )
 
         if rc != 0:
             self._stopOnFailure()
-            raise EnvironmentError(f'{self}: repository init failed with exit code {rc}')
+            raise OSError(f'{self}: repository init failed with exit code {rc}')
 
         log.msg(f"hgpoller: finished initializing working dir {self.workdir}")
 
@@ -226,9 +278,14 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
             command += ['-B', name]
         command += [self.repourl]
 
-        yield runprocess.run_process(self.master.reactor, command, workdir=self._absWorkdir(),
-                                     env=os.environ, collect_stdout=False,
-                                     collect_stderr=False)
+        yield runprocess.run_process(
+            self.master.reactor,
+            command,
+            workdir=self._absWorkdir(),
+            env=os.environ,
+            collect_stdout=False,
+            collect_stderr=False,
+        )
 
     def _getCurrentRev(self, branch='default'):
         """Return a deferred for current numeric rev in state db.
@@ -252,11 +309,14 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
         yet, one shouldn't be surprised to get errors)
         """
 
-        rc, stdout = yield runprocess.run_process(self.master.reactor,
-                                                  [self.hgbin, 'heads', branch,
-                                                   '--template={rev}' + os.linesep],
-                                                  workdir=self._absWorkdir(), env=os.environ,
-                                                  collect_stderr=False, stderr_is_error=True)
+        rc, stdout = yield runprocess.run_process(
+            self.master.reactor,
+            [self.hgbin, 'heads', branch, '--template={rev}' + os.linesep],
+            workdir=self._absWorkdir(),
+            env=os.environ,
+            collect_stderr=False,
+            stderr_is_error=True,
+        )
 
         if rc != 0:
             log.err(f"{self}: could not find revision {branch} in repository {self.repourl}")
@@ -266,11 +326,13 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
             return None
 
         if len(stdout.split()) > 1:
-            log.err(f"{self}: caught several heads in branch {branch} "
-                    f"from repository {self.repourl}. Staying at previous revision"
-                    "You should wait until the situation is normal again "
-                    "due to a merge or directly strip if remote repo "
-                    "gets stripped later.")
+            log.err(
+                f"{self}: caught several heads in branch {branch} "
+                f"from repository {self.repourl}. Staying at previous revision"
+                "You should wait until the situation is normal again "
+                "due to a merge or directly strip if remote repo "
+                "gets stripped later."
+            )
             return None
 
         # in case of whole reconstruction, are we sure that we'll get the
@@ -296,16 +358,18 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
 
     @defer.inlineCallbacks
     def _getRevNodeList(self, revset):
-
-        rc, stdout = yield runprocess.run_process(self.master.reactor,
-                                                  [self.hgbin, 'log', '-r', revset,
-                                                   r'--template={rev}:{node}\n'],
-                                                  workdir=self._absWorkdir(), env=os.environ,
-                                                  collect_stdout=True, collect_stderr=False,
-                                                  stderr_is_error=True)
+        rc, stdout = yield runprocess.run_process(
+            self.master.reactor,
+            [self.hgbin, 'log', '-r', revset, r'--template={rev}:{node}\n'],
+            workdir=self._absWorkdir(),
+            env=os.environ,
+            collect_stdout=True,
+            collect_stderr=False,
+            stderr_is_error=True,
+        )
 
         if rc != 0:
-            raise EnvironmentError(f'{self}: could not get rev node list: {rc}')
+            raise OSError(f'{self}: could not get rev node list: {rc}')
 
         results = stdout.decode(self.encoding)
 
@@ -335,11 +399,12 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
         else:
             del revNodeList[0]
 
-        log.msg(f'hgpoller: processing {len(revNodeList)} changes in branch '
-                f'{repr(branch)}: {repr(revNodeList)} in {repr(self._absWorkdir())}')
+        log.msg(
+            f'hgpoller: processing {len(revNodeList)} changes in branch '
+            f'{branch!r}: {revNodeList!r} in {self._absWorkdir()!r}'
+        )
         for _, node in revNodeList:
-            timestamp, author, files, comments = yield self._getRevDetails(
-                node)
+            timestamp, author, files, comments = yield self._getRevDetails(node)
             yield self.master.data.updates.addChange(
                 author=author,
                 committer=None,
@@ -352,14 +417,14 @@ class HgPoller(base.ReconfigurablePollingChangeSource, StateMixin):
                 category=bytes2unicode(self.category),
                 project=bytes2unicode(self.project),
                 repository=bytes2unicode(self.repourl),
-                src='hg')
+                src='hg',
+            )
             # writing after addChange so that a rev is never missed,
             # but at once to avoid impact from later errors
             yield self._setCurrentRev(new_rev, branch)
 
-    def _stopOnFailure(self, f):
+    def _stopOnFailure(self):
         "utility method to stop the service when a failure occurs"
         if self.running:
             d = defer.maybeDeferred(self.stopService)
             d.addErrback(log.err, 'while stopping broken HgPoller service')
-        return f

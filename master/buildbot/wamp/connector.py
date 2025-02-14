@@ -12,14 +12,13 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright  Team Members
-
+from __future__ import annotations
 
 import txaio
 from autobahn.twisted.wamp import ApplicationSession
 from autobahn.twisted.wamp import Service
 from autobahn.wamp.exception import TransportLost
 from twisted.internet import defer
-from twisted.python import failure
 from twisted.python import log
 
 from buildbot.util import bytes2unicode
@@ -27,7 +26,6 @@ from buildbot.util import service
 
 
 class MasterService(ApplicationSession, service.AsyncMultiService):
-
     """
     concatenation of all the wamp services of buildbot
     """
@@ -35,7 +33,7 @@ class MasterService(ApplicationSession, service.AsyncMultiService):
     def __init__(self, config):
         # Cannot use super() here.
         # We must explicitly call both parent constructors.
-        ApplicationSession.__init__(self)
+        ApplicationSession.__init__(self, config)
         service.AsyncMultiService.__init__(self)
         self.leaving = False
         self.setServiceParent(config.extra['parent'])
@@ -43,7 +41,7 @@ class MasterService(ApplicationSession, service.AsyncMultiService):
     @defer.inlineCallbacks
     def onJoin(self, details):
         log.msg("Wamp connection succeed!")
-        for handler in [self] + self.services:
+        for handler in [self, *self.services]:
             yield self.register(handler)
             yield self.subscribe(handler)
         yield self.publish(f"org.buildbot.{self.master.masterid}.connected")
@@ -62,8 +60,7 @@ class MasterService(ApplicationSession, service.AsyncMultiService):
         # It is possible that such failure is practically non-existent
         # so for now, we just crash the master
         log.msg("Guru meditation! We have been disconnected from wamp server")
-        log.msg(
-            "We don't know how to recover this without restarting the whole system")
+        log.msg("We don't know how to recover this without restarting the whole system")
         log.msg(str(details))
         yield self.master.stopService()
 
@@ -75,13 +72,15 @@ def make(config):
     if config:
         return MasterService(config)
     # if no config given, return a description of this WAMPlet ..
-    return {'label': 'Buildbot master wamplet',
-            'description': 'This contains all the wamp methods provided by a buildbot master'}
+    return {
+        'label': 'Buildbot master wamplet',
+        'description': 'This contains all the wamp methods provided by a buildbot master',
+    }
 
 
 class WampConnector(service.ReconfigurableServiceMixin, service.AsyncMultiService):
     serviceClass = Service
-    name = "wamp"
+    name: str | None = "wamp"  # type: ignore[assignment]
 
     def __init__(self):
         super().__init__()
@@ -101,6 +100,7 @@ class WampConnector(service.ReconfigurableServiceMixin, service.AsyncMultiServic
         def gotService(service):
             d.callback(service)
             return service
+
         return d
 
     def stopService(self):
@@ -114,8 +114,8 @@ class WampConnector(service.ReconfigurableServiceMixin, service.AsyncMultiServic
         service = yield self.getService()
         try:
             ret = yield service.publish(topic, data, options=options)
-        except TransportLost:
-            log.err(failure.Failure(), "while publishing event " + topic)
+        except TransportLost as e:
+            log.err(e, "while publishing event " + topic)
             return None
         return ret
 
@@ -143,8 +143,11 @@ class WampConnector(service.ReconfigurableServiceMixin, service.AsyncMultiServic
         # Implementing reconfiguration just for wamp_debug_level does not seem like a good
         # investment.
         if self.app is not None:
-            if self.router_url != router_url or self.realm != realm or \
-                    self.wamp_debug_level != wamp_debug_level:
+            if (
+                self.router_url != router_url
+                or self.realm != realm
+                or self.wamp_debug_level != wamp_debug_level
+            ):
                 raise ValueError("Cannot use different wamp settings when reconfiguring")
             return
 
@@ -157,9 +160,9 @@ class WampConnector(service.ReconfigurableServiceMixin, service.AsyncMultiServic
 
         self.app = self.serviceClass(
             url=self.router_url,
-            extra=dict(master=self.master, parent=self),
+            extra={"master": self.master, "parent": self},
             realm=realm,
-            make=make
+            make=make,
         )
         txaio.set_global_log_level(wamp_debug_level)
         yield self.app.setServiceParent(self)

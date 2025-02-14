@@ -10,7 +10,6 @@ from buildbot.util.service import BuildbotService
 
 
 class FakeServiceUsingSecrets(BuildbotService):
-
     name = "FakeServiceUsingSecrets"
     secrets = ["foo", "bar", "secret"]
 
@@ -24,23 +23,18 @@ class FakeServiceUsingSecrets(BuildbotService):
 
 
 class TestRenderSecrets(TestReactorMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
-        fakeStorageService = FakeSecretStorage(secretdict={"foo": "bar",
-                                                       "other": "value"})
+        self.master = yield fakemaster.make_master(self)
+        fakeStorageService = FakeSecretStorage(secretdict={"foo": "bar", "other": "value"})
         self.secretsrv = SecretManager()
         self.secretsrv.services = [fakeStorageService]
         yield self.secretsrv.setServiceParent(self.master)
         self.srvtest = FakeServiceUsingSecrets()
         yield self.srvtest.setServiceParent(self.master)
         yield self.master.startService()
-
-    @defer.inlineCallbacks
-    def tearDown(self):
-        yield self.master.stopService()
+        self.addCleanup(self.master.stopService)
 
     @defer.inlineCallbacks
     def test_secret_rendered(self):
@@ -53,5 +47,5 @@ class TestRenderSecrets(TestReactorMixin, unittest.TestCase):
     def test_secret_rendered_not_found(self):
         new = FakeServiceUsingSecrets(foo=Secret("foo"))
         yield self.srvtest.reconfigServiceWithSibling(new)
-        with self.assertRaises(Exception):
+        with self.assertRaises(AttributeError):
             self.srvtest.returnRenderedSecrets("more")

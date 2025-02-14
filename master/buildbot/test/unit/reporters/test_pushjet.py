@@ -13,6 +13,8 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
 import os
 from unittest import SkipTest
 
@@ -29,20 +31,20 @@ from buildbot.test.util.config import ConfigErrorsMixin
 from buildbot.util import httpclientservice
 
 
-class TestPushjetNotifier(ConfigErrorsMixin, TestReactorMixin,
-                          unittest.TestCase):
-
+class TestPushjetNotifier(ConfigErrorsMixin, TestReactorMixin, unittest.TestCase):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True,
-                                             wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
 
     # returns a Deferred
     def setupFakeHttp(self, base_url='https://api.pushjet.io'):
         return fakehttpclientservice.HTTPClientService.getService(self.master, self, base_url)
 
     @defer.inlineCallbacks
-    def setupPushjetNotifier(self, secret=Interpolate("1234"), **kwargs):
+    def setupPushjetNotifier(self, secret: Interpolate | None = None, **kwargs):
+        if secret is None:
+            secret = Interpolate("1234")
         pn = PushjetNotifier(secret, **kwargs)
         yield pn.setServiceParent(self.master)
         yield pn.startService()
@@ -52,16 +54,14 @@ class TestPushjetNotifier(ConfigErrorsMixin, TestReactorMixin,
     def test_sendMessage(self):
         _http = yield self.setupFakeHttp()
         pn = yield self.setupPushjetNotifier(levels={'passing': 2})
-        _http.expect("post", "/message",
-                     data={'secret': "1234", 'level': 2,
-                           'message': "Test", 'title': "Tee"},
-                     content_json={'status': 'ok'})
+        _http.expect(
+            "post",
+            "/message",
+            data={'secret': "1234", 'level': 2, 'message': "Test", 'title': "Tee"},
+            content_json={'status': 'ok'},
+        )
 
-        n = yield pn.sendMessage([{
-            "body": "Test",
-            "subject": "Tee",
-            "results": SUCCESS
-        }])
+        n = yield pn.sendMessage([{"body": "Test", "subject": "Tee", "results": SUCCESS}])
 
         j = yield n.json()
         self.assertEqual(j['status'], 'ok')
@@ -70,9 +70,12 @@ class TestPushjetNotifier(ConfigErrorsMixin, TestReactorMixin,
     def test_sendNotification(self):
         _http = yield self.setupFakeHttp('https://tests.io')
         pn = yield self.setupPushjetNotifier(base_url='https://tests.io')
-        _http.expect("post", "/message",
-                     data={'secret': "1234", 'message': "Test"},
-                     content_json={'status': 'ok'})
+        _http.expect(
+            "post",
+            "/message",
+            data={'secret': "1234", 'message': "Test"},
+            content_json={'status': 'ok'},
+        )
         n = yield pn.sendNotification({'message': "Test"})
         j = yield n.json()
         self.assertEqual(j['status'], 'ok')
@@ -81,10 +84,12 @@ class TestPushjetNotifier(ConfigErrorsMixin, TestReactorMixin,
     def test_sendRealNotification(self):
         secret = os.environ.get('TEST_PUSHJET_SECRET')
         if secret is None:
-            raise SkipTest("real pushjet test runs only if the variable "
-                           "TEST_PUSHJET_SECRET is defined")
+            raise SkipTest(
+                "real pushjet test runs only if the variable TEST_PUSHJET_SECRET is defined"
+            )
         _http = yield httpclientservice.HTTPClientService.getService(
-            self.master, 'https://api.pushjet.io')
+            self.master, 'https://api.pushjet.io'
+        )
         yield _http.startService()
         pn = yield self.setupPushjetNotifier(secret=secret)
         n = yield pn.sendNotification({'message': "Buildbot Pushjet test passed!"})

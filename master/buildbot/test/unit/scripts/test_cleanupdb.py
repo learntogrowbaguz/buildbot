@@ -17,7 +17,6 @@ import os
 import textwrap
 
 import sqlalchemy as sa
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
@@ -25,136 +24,128 @@ from buildbot.scripts import cleanupdb
 from buildbot.test.fake import fakemaster
 from buildbot.test.reactor import TestReactorMixin
 from buildbot.test.unit.db import test_logs
-from buildbot.test.util import db
 from buildbot.test.util import dirs
 from buildbot.test.util import misc
+from buildbot.util.twisted import async_to_deferred
 
 try:
     import lz4
-    [lz4]
+
+    _ = lz4
     hasLz4 = True
 except ImportError:
     hasLz4 = False
 
+try:
+    import zstandard
+
+    _ = zstandard
+    HAS_ZSTD = True
+except ImportError:
+    HAS_ZSTD = False
+
+try:
+    import brotli
+
+    _ = brotli
+    HAS_BROTLI = True
+except ImportError:
+    HAS_BROTLI = False
+
 
 def mkconfig(**kwargs):
-    config = dict(quiet=False, basedir=os.path.abspath('basedir'), force=True)
+    config = {"quiet": False, "basedir": os.path.abspath('basedir'), "force": True}
     config.update(kwargs)
     return config
 
 
-def patch_environ(case, key, value):
-    """
-    Add an environment variable for the duration of a test.
-    """
-    old_environ = os.environ.copy()
-
-    def cleanup():
-        os.environ.clear()
-        os.environ.update(old_environ)
-    os.environ[key] = value
-    case.addCleanup(cleanup)
+def write_buildbot_tac(path):
+    with open(path, "w", encoding='utf-8') as f:
+        f.write(
+            textwrap.dedent("""
+            from twisted.application import service
+            application = service.Application('buildmaster')
+        """)
+        )
 
 
-class TestCleanupDb(misc.StdoutAssertionsMixin, dirs.DirsMixin,
-                    TestReactorMixin, unittest.TestCase):
+def write_master_cfg(path, db_url, extraconfig):
+    with open(path, "w", encoding='utf-8') as f:
+        f.write(
+            textwrap.dedent(f"""
+            from buildbot.plugins import *
+            c = BuildmasterConfig = dict()
+            c['db_url'] = {db_url!r}
+            c['buildbotNetUsageData'] = None
+            c['multiMaster'] = True  # don't complain for no builders
+            {extraconfig}
+        """)
+        )
 
+
+class TestCleanupDb(
+    misc.StdoutAssertionsMixin, dirs.DirsMixin, TestReactorMixin, unittest.TestCase
+):
     def setUp(self):
         self.setup_test_reactor()
-        self.origcwd = os.getcwd()
         self.setUpDirs('basedir')
-        with open(os.path.join('basedir', 'buildbot.tac'), 'wt', encoding='utf-8') as f:
-            f.write(textwrap.dedent("""
-                from twisted.application import service
-                application = service.Application('buildmaster')
-            """))
+        write_buildbot_tac(os.path.join('basedir', 'buildbot.tac'))
         self.setUpStdoutAssertions()
-        self.ensureNoSqliteMemory()
-
-    def tearDown(self):
-        os.chdir(self.origcwd)
-        self.tearDownDirs()
-
-    def ensureNoSqliteMemory(self):
-        # test may use mysql or pg if configured in env
-        envkey = "BUILDBOT_TEST_DB_URL"
-        if envkey not in os.environ or os.environ[envkey] == 'sqlite://':
-
-            patch_environ(self, envkey, "sqlite:///" + os.path.join(
-                self.origcwd, "basedir", "state.sqlite"))
 
     def createMasterCfg(self, extraconfig=""):
-        os.chdir(self.origcwd)
-        with open(os.path.join('basedir', 'master.cfg'), 'wt', encoding='utf-8') as f:
-            f.write(textwrap.dedent(f"""
-                from buildbot.plugins import *
-                c = BuildmasterConfig = dict()
-                c['db_url'] = {repr(os.environ["BUILDBOT_TEST_DB_URL"])}
-                c['buildbotNetUsageData'] = None
-                c['multiMaster'] = True  # don't complain for no builders
-                {extraconfig}
-            """))
+        write_master_cfg(os.path.join('basedir', 'master.cfg'), 'sqlite://', extraconfig)
 
-    @defer.inlineCallbacks
-    def test_cleanup_not_basedir(self):
-        res = yield cleanupdb._cleanupDatabase(mkconfig(basedir='doesntexist'))
+    @async_to_deferred
+    async def test_cleanup_not_basedir(self):
+        res = await cleanupdb._cleanupDatabase(mkconfig(basedir='doesntexist'))
         self.assertEqual(res, 1)
         self.assertInStdout('invalid buildmaster directory')
 
-    @defer.inlineCallbacks
-    def test_cleanup_bad_config(self):
-        res = yield cleanupdb._cleanupDatabase(mkconfig(basedir='basedir'))
+    @async_to_deferred
+    async def test_cleanup_bad_config(self):
+        res = await cleanupdb._cleanupDatabase(mkconfig(basedir='basedir'))
         self.assertEqual(res, 1)
         self.assertInStdout("master.cfg' does not exist")
 
-    @defer.inlineCallbacks
-    def test_cleanup_bad_config2(self):
-
+    @async_to_deferred
+    async def test_cleanup_bad_config2(self):
         self.createMasterCfg(extraconfig="++++ # syntaxerror")
-        res = yield cleanupdb._cleanupDatabase(mkconfig(basedir='basedir'))
+        res = await cleanupdb._cleanupDatabase(mkconfig(basedir='basedir'))
         self.assertEqual(res, 1)
-        self.assertInStdout(
-            "encountered a SyntaxError while parsing config file:")
+        self.assertInStdout("encountered a SyntaxError while parsing config file:")
         # config logs an error via log.err, we must eat it or trial will
         # complain
         self.flushLoggedErrors()
 
-    def assertDictAlmostEqual(self, d1, d2):
-        # The test shows each methods return different size
-        # but we still make a fuzzy comparison to resist if underlying libraries
-        # improve efficiency
-        self.assertEqual(len(d1), len(d2))
-        for k in d2.keys():
-            self.assertApproximates(d1[k], d2[k], 10)
 
-
-class TestCleanupDbRealDb(db.RealDatabaseWithConnectorMixin, TestCleanupDb):
-
+class TestCleanupDbRealDb(
+    misc.StdoutAssertionsMixin, dirs.DirsMixin, TestReactorMixin, unittest.TestCase
+):
     @defer.inlineCallbacks
     def setUp(self):
-        yield super().setUp()
+        self.setup_test_reactor()
+        self.setUpDirs('basedir')
+        write_buildbot_tac(os.path.join('basedir', 'buildbot.tac'))
+        self.setUpStdoutAssertions()
 
-        table_names = [
-            'logs', 'logchunks', 'steps', 'builds', 'builders',
-            'masters', 'buildrequests', 'buildsets', 'workers'
-        ]
+        self.master = yield fakemaster.make_master(
+            self, wantDb=True, wantRealReactor=True, sqlite_memory=False
+        )
 
-        self.master = fakemaster.make_master(self, wantRealReactor=True)
-        yield self.setUpRealDatabaseWithConnector(self.master, table_names=table_names)
+    def createMasterCfg(self, db_url, extraconfig=""):
+        write_master_cfg(os.path.join('basedir', 'master.cfg'), db_url, extraconfig)
 
-    @defer.inlineCallbacks
-    def tearDown(self):
-        yield self.tearDownRealDatabaseWithConnector()
-
-    @defer.inlineCallbacks
-    def test_cleanup(self):
+    @async_to_deferred
+    async def test_cleanup(self):
         # we reuse the fake db background data from db.logs unit tests
-        yield self.insertTestData(test_logs.Tests.backgroundData)
+        await self.master.db.insert_test_data(test_logs.Tests.backgroundData)
 
         # insert a log with lots of redundancy
         LOGDATA = "xx\n" * 2000
-        logid = yield self.master.db.logs.addLog(102, "x", "x", "s")
-        yield self.master.db.logs.appendLog(logid, LOGDATA)
+        logid = await self.master.db.logs.addLog(102, "x", "x", "s")
+        await self.master.db.logs.appendLog(logid, LOGDATA)
+
+        db_url = self.master.db.configured_db_config.db_url
 
         # test all methods
         lengths = {}
@@ -163,23 +154,49 @@ class TestCleanupDbRealDb(db.RealDatabaseWithConnectorMixin, TestCleanupDb):
                 # ok.. lz4 is not installed, don't fail
                 lengths["lz4"] = 40
                 continue
+            if mode == "zstd" and not HAS_ZSTD:
+                # zstandard is not installed, don't fail
+                lengths["zstd"] = 20
+                continue
+            if mode == "br" and not HAS_BROTLI:
+                # brotli is not installed, don't fail
+                lengths["br"] = 14
+                continue
             # create a master.cfg with different compression method
-            self.createMasterCfg(f"c['logCompressionMethod'] = '{mode}'")
-            res = yield cleanupdb._cleanupDatabase(mkconfig(basedir='basedir'))
+            self.createMasterCfg(db_url, f"c['logCompressionMethod'] = '{mode}'")
+            res = await cleanupdb._cleanupDatabase(mkconfig(basedir='basedir'))
             self.assertEqual(res, 0)
 
             # make sure the compression don't change the data we can retrieve
             # via api
-            res = yield self.master.db.logs.getLogLines(logid, 0, 2000)
+            res = await self.master.db.logs.getLogLines(logid, 0, 2000)
             self.assertEqual(res, LOGDATA)
 
             # retrieve the actual data size in db using raw sqlalchemy
             def thd(conn):
                 tbl = self.master.db.model.logchunks
-                q = sa.select([sa.func.sum(sa.func.length(tbl.c.content))])
+                q = sa.select(sa.func.sum(sa.func.length(tbl.c.content)))
                 q = q.where(tbl.c.logid == logid)
                 return conn.execute(q).fetchone()[0]
-            lengths[mode] = yield self.master.db.pool.do(thd)
+
+            lengths[mode] = await self.master.db.pool.do(thd)
 
         self.assertDictAlmostEqual(
-            lengths, {'raw': 5999, 'bz2': 44, 'lz4': 40, 'gz': 31})
+            lengths,
+            {
+                'raw': 5999,
+                'bz2': 44,
+                'lz4': 40,
+                'gz': 31,
+                'zstd': 20,
+                'br': 14,
+            },
+        )
+
+    def assertDictAlmostEqual(self, d1, d2):
+        # The test shows each methods return different size
+        # but we still make a fuzzy comparison to resist if underlying libraries
+        # improve efficiency
+        self.assertEqual(len(d1), len(d2))
+        for k in d2.keys():
+            self.assertApproximates(d1[k], d2[k], 10)

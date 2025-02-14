@@ -19,30 +19,25 @@ try:
     from buildbot_pkg import setup_www_plugin
 except ImportError:
     import sys
-    print('Please install buildbot_pkg module in order to install that '
-          'package, or use the pre-build .whl modules available on pypi',
-          file=sys.stderr)
-    sys.exit(1)
 
+    print(
+        'Please install buildbot_pkg module in order to install that '
+        'package, or use the pre-build .whl modules available on pypi',
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 setup_www_plugin(
     name='buildbot-wsgi-dashboards',
-    description='Buildbot plugin to integrate flask or bottle dashboards to buildbot UI',
-    author=u'Buildbot maintainers',
-    author_email=u'devel@buildbot.net',
+    description='Buildbot plugin to integrate flask or bottle dashboards to buildbot UI (React)',
+    author='Buildbot maintainers',
+    author_email='devel@buildbot.net',
     url='http://buildbot.net/',
     packages=['buildbot_wsgi_dashboards'],
-    package_data={
-        '': [
-            'VERSION',
-            'static/*'
-        ]
-    },
+    package_data={'': ['VERSION', 'static/*']},
     entry_points="""
         [buildbot.www]
         wsgi_dashboards = buildbot_wsgi_dashboards:ep
     """,
-    classifiers=[
-        'License :: OSI Approved :: GNU General Public License v2 (GPLv2)'
-    ],
+    classifiers=['License :: OSI Approved :: GNU General Public License v2 (GPLv2)'],
 )

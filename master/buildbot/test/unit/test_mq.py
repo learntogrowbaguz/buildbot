@@ -13,7 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
@@ -26,12 +26,11 @@ from buildbot.test.util import tuplematching
 
 
 class Tests(interfaces.InterfaceTests):
-
     def setUp(self):
         raise NotImplementedError
 
     def test_empty_produce(self):
-        self.mq.produce(('a', 'b', 'c'), dict(x=1))
+        self.mq.produce(('a', 'b', 'c'), {"x": 1})
         # ..nothing happens
 
     def test_signature_produce(self):
@@ -59,7 +58,6 @@ class Tests(interfaces.InterfaceTests):
 
 
 class RealTests(tuplematching.TupleMatchingMixin, Tests):
-
     # tests that only "real" implementations will pass
 
     # called by the TupleMatchingMixin methods
@@ -77,10 +75,10 @@ class RealTests(tuplematching.TupleMatchingMixin, Tests):
     def test_stopConsuming(self):
         cb = mock.Mock()
         qref = yield self.mq.startConsuming(cb, ('abc',))
-        self.mq.produce(('abc',), dict(x=1))
+        self.mq.produce(('abc',), {"x": 1})
         qref.stopConsuming()
-        self.mq.produce(('abc',), dict(x=1))
-        cb.assert_called_once_with(('abc',), dict(x=1))
+        self.mq.produce(('abc',), {"x": 1})
+        cb.assert_called_once_with(('abc',), {"x": 1})
 
     @defer.inlineCallbacks
     def test_stopConsuming_twice(self):
@@ -126,27 +124,25 @@ class RealTests(tuplematching.TupleMatchingMixin, Tests):
     def test_waitUntilEvent_check_false(self):
         d = self.mq.waitUntilEvent(('abc',), lambda: False)
         self.assertEqual(d.called, False)
-        self.mq.produce(('abc',), dict(x=1))
+        self.mq.produce(('abc',), {"x": 1})
         self.assertEqual(d.called, True)
         res = yield d
-        self.assertEqual(res, (('abc',), dict(x=1)))
-    timeout = 3  # those tests should not run long
+        self.assertEqual(res, (('abc',), {"x": 1}))
 
 
 class TestFakeMQ(TestReactorMixin, unittest.TestCase, Tests):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantMq=True)
         self.mq = self.master.mq
         self.mq.verifyMessages = False
 
 
 class TestSimpleMQ(TestReactorMixin, unittest.TestCase, RealTests):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         self.mq = simple.SimpleMQ()
         yield self.mq.setServiceParent(self.master)

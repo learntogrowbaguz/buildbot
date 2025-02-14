@@ -14,25 +14,50 @@
 # Copyright Buildbot Team Members
 
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from typing import Callable
+
+from buildbot.config.checks import check_markdown_support
 from buildbot.config.checks import check_param_length
+from buildbot.config.checks import check_param_str_none
 from buildbot.config.errors import error
-from buildbot.db.model import Model
+from buildbot.db import model_config
 from buildbot.util import bytes2unicode
 from buildbot.util import config as util_config
 from buildbot.util import safeTranslate
+
+if TYPE_CHECKING:
+    from buildbot.process.build import Build
+
 
 RESERVED_UNDERSCORE_NAMES = ["__Janitor"]
 
 
 class BuilderConfig(util_config.ConfiguredMixin):
-
-    def __init__(self, name=None, workername=None, workernames=None,
-                 builddir=None, workerbuilddir=None, factory=None,
-                 tags=None,
-                 nextWorker=None, nextBuild=None, locks=None, env=None,
-                 properties=None, collapseRequests=None, description=None,
-                 canStartBuild=None, defaultProperties=None
-                 ):
+    def __init__(
+        self,
+        name=None,
+        workername=None,
+        workernames=None,
+        builddir=None,
+        workerbuilddir=None,
+        factory=None,
+        tags=None,
+        nextWorker=None,
+        nextBuild=None,
+        locks=None,
+        env=None,
+        properties=None,
+        collapseRequests=None,
+        description=None,
+        description_format=None,
+        canStartBuild=None,
+        defaultProperties=None,
+        project=None,
+        do_build_if: Callable[[Build], bool] | None = None,
+    ):
         # name is required, and can't start with '_'
         if not name or type(name) not in (bytes, str):
             error("builder's name is required")
@@ -44,10 +69,16 @@ class BuilderConfig(util_config.ConfiguredMixin):
         except UnicodeDecodeError:
             error("builder names must be unicode or ASCII")
 
+        if not isinstance(project, (type(None), str)):
+            error("builder project must be None or str")
+            project = None
+        self.project = project
+
         # factory is required
         if factory is None:
             error(f"builder '{name}' has no factory")
         from buildbot.process.factory import BuildFactory
+
         if factory is not None and not isinstance(factory, BuildFactory):
             error(f"builder '{name}'s factory is not a BuildFactory instance")
         self.factory = factory
@@ -64,8 +95,8 @@ class BuilderConfig(util_config.ConfiguredMixin):
 
         if workername:
             if not isinstance(workername, str):
-                error(f"builder '{name}': workername must be a string but it is {repr(workername)}")
-            workernames = workernames + [workername]
+                error(f"builder '{name}': workername must be a string but it is {workername!r}")
+            workernames = [*workernames, workername]
         if not workernames:
             error(f"builder '{name}': at least one workername is required")
 
@@ -86,7 +117,7 @@ class BuilderConfig(util_config.ConfiguredMixin):
         if tags:
             if not isinstance(tags, list):
                 error(f"builder '{name}': tags must be a list")
-            bad_tags = any((tag for tag in tags if not isinstance(tag, str)))
+            bad_tags = any(tag for tag in tags if not isinstance(tag, str))
             if bad_tags:
                 error(f"builder '{name}': tags list contains something that is not a string")
 
@@ -115,17 +146,38 @@ class BuilderConfig(util_config.ConfiguredMixin):
 
         self.properties = properties or {}
         for property_name in self.properties:
-            check_param_length(property_name, f'Builder {self.name} property',
-                               Model.property_name_length)
+            check_param_length(
+                property_name, f'Builder {self.name} property', model_config.property_name_length
+            )
 
         self.defaultProperties = defaultProperties or {}
         for property_name in self.defaultProperties:
-            check_param_length(property_name, f'Builder {self.name} default property',
-                               Model.property_name_length)
+            check_param_length(
+                property_name,
+                f'Builder {self.name} default property',
+                model_config.property_name_length,
+            )
 
         self.collapseRequests = collapseRequests
 
-        self.description = description
+        self.description = check_param_str_none(description, self.__class__, "description")
+        self.description_format = check_param_str_none(
+            description_format, self.__class__, "description_format"
+        )
+
+        if self.description_format is None:
+            pass
+        elif self.description_format == "markdown":
+            if not check_markdown_support(self.__class__):  # pragma: no cover
+                self.description_format = None
+        else:
+            error("builder description format must be None or \"markdown\"")
+            self.description_format = None
+
+        if do_build_if is not None:
+            self.do_build_if = do_build_if
+        else:
+            self.do_build_if = lambda x: True
 
     def getConfigDict(self):
         # note: this method will disappear eventually - put your smarts in the
@@ -137,6 +189,8 @@ class BuilderConfig(util_config.ConfiguredMixin):
             'builddir': self.builddir,
             'workerbuilddir': self.workerbuilddir,
         }
+        if self.project:
+            rv['project'] = self.project
         if self.tags:
             rv['tags'] = self.tags
         if self.nextWorker:
@@ -155,4 +209,6 @@ class BuilderConfig(util_config.ConfiguredMixin):
             rv['collapseRequests'] = self.collapseRequests
         if self.description:
             rv['description'] = self.description
+            if self.description_format:
+                rv['description_format'] = self.description_format
         return rv

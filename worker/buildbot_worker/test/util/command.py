@@ -13,9 +13,6 @@
 #
 # Copyright Buildbot Team Members
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 import os
 import shutil
 
@@ -25,8 +22,7 @@ from buildbot_worker.test.fake import runprocess
 from buildbot_worker.test.fake.protocolcommand import FakeProtocolCommand
 
 
-class CommandTestMixin(object):
-
+class CommandTestMixin:
     """
     Support for testing Command subclasses.
     """
@@ -48,18 +44,20 @@ class CommandTestMixin(object):
         if os.path.exists(self.basedir):
             shutil.rmtree(self.basedir)
 
-    def tearDownCommand(self):
-        """
-        Call this from the tearDown method to clean up any leftover workdirs and do
-        any additional cleanup required.
-        """
-        # clean up the basedir unconditionally
-        if os.path.exists(self.basedir):
-            shutil.rmtree(self.basedir)
+        def cleanup():
+            """
+            Call this from the tearDown method to clean up any leftover workdirs and do
+            any additional cleanup required.
+            """
+            # clean up the basedir unconditionally
+            if os.path.exists(self.basedir):
+                shutil.rmtree(self.basedir)
 
-        # finish up the runprocess
-        if hasattr(self, 'runprocess_patched') and self.runprocess_patched:
-            runprocess.FakeRunProcess.test_done()
+            # finish up the runprocess
+            if hasattr(self, 'runprocess_patched') and self.runprocess_patched:
+                runprocess.FakeRunProcess.test_done()
+
+        self.addCleanup(cleanup)
 
     def make_command(self, cmdclass, args, makedirs=False):
         """
@@ -80,8 +78,7 @@ class CommandTestMixin(object):
         # set up the workdir and basedir
         if makedirs:
             basedir_abs = os.path.abspath(os.path.join(self.basedir))
-            workdir_abs = os.path.abspath(
-                os.path.join(self.basedir, 'workdir'))
+            workdir_abs = os.path.abspath(os.path.join(self.basedir, 'workdir'))
             if os.path.exists(basedir_abs):
                 shutil.rmtree(basedir_abs)
             os.makedirs(workdir_abs)
@@ -125,8 +122,7 @@ class CommandTestMixin(object):
         """
         Patch a fake RunProcess class in, and set the given expectations.
         """
-        self.patch(
-            buildbot_worker.runprocess, 'RunProcess', runprocess.FakeRunProcess)
+        self.patch(buildbot_worker.runprocess, 'RunProcess', runprocess.FakeRunProcess)
         buildbot_worker.runprocess.RunProcess.expect(*expectations)
         self.runprocess_patched = True
 
@@ -140,6 +136,7 @@ class CommandTestMixin(object):
             if n == name:
                 return result
             return old_getCommand(n)
+
         self.patch(utils, 'getCommand', new_getCommand)
 
     def clean_environ(self):

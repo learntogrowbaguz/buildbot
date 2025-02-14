@@ -14,8 +14,7 @@
 # Copyright Buildbot Team Members
 
 import posixpath
-
-import mock
+from unittest import mock
 
 from buildbot import config
 from buildbot.process import factory
@@ -26,7 +25,6 @@ from buildbot.worker import base
 
 
 class FakeWorkerStatus(properties.PropertiesMixin):
-
     def __init__(self, name):
         self.name = name
         self.info = properties.Properties()
@@ -34,23 +32,21 @@ class FakeWorkerStatus(properties.PropertiesMixin):
 
 
 class FakeBuild(properties.PropertiesMixin):
-
     def __init__(self, props=None, master=None):
         self.builder = fakemaster.FakeBuilder(master)
-        self.workerforbuilder = mock.Mock(
-            spec=workerforbuilder.WorkerForBuilder)
+        self.workerforbuilder = mock.Mock(spec=workerforbuilder.WorkerForBuilder)
         self.workerforbuilder.worker = mock.Mock(spec=base.Worker)
         self.workerforbuilder.worker.info = properties.Properties()
         self.workerforbuilder.worker.workername = 'workername'
         self.builder.config = config.BuilderConfig(
-            name='bldr',
-            workernames=['a'],
-            factory=factory.BuildFactory())
+            name='bldr', workernames=['a'], factory=factory.BuildFactory()
+        )
         self.path_module = posixpath
         self.buildid = 92
         self.number = 13
         self.workdir = 'build'
         self.locks = []
+        self._locks_to_acquire = []
 
         self.sources = {}
         if props is None:
@@ -73,8 +69,7 @@ class FakeBuild(properties.PropertiesMixin):
 
     def allChanges(self):
         for s in self.sources.values():
-            for c in s.changes:
-                yield c
+            yield from s.changes
 
     def allFiles(self):
         files = []
@@ -89,8 +84,8 @@ class FakeBuild(properties.PropertiesMixin):
     def getWorkerInfo(self):
         return self.workerforbuilder.worker.info
 
-    def setUniqueStepName(self, step):
-        pass
+    def setUniqueStepName(self, name):
+        return name
 
 
 class FakeBuildForRendering:

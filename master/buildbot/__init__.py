@@ -30,7 +30,9 @@ def gitDescribeToPep440(version):
     # preceded by 'g' we parse this a transform into a pep440 release version 0.9.9.dev20
     # (increment last digit and add dev before 20)
 
-    VERSION_MATCH = re.compile(r'(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.post(?P<post>\d+))?(-(?P<dev>\d+))?(-g(?P<commit>.+))?')  # noqa pylint: disable=line-too-long
+    VERSION_MATCH = re.compile(
+        r'(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.post(?P<post>\d+))?(-(?P<dev>\d+))?(-g(?P<commit>.+))?'
+    )
     v = VERSION_MATCH.search(version)
     if v:
         major = int(v.group('major'))
@@ -39,7 +41,7 @@ def gitDescribeToPep440(version):
         if v.group('dev'):
             patch += 1
             dev = int(v.group('dev'))
-            return f"{major}.{minor}.{patch}-dev{dev}"
+            return f"{major}.{minor}.{patch}.dev{dev}"
         if v.group('post'):
             return f"{major}.{minor}.{patch}.post{v.group('post')}"
         return f"{major}.{minor}.{patch}"
@@ -53,34 +55,34 @@ def mTimeVersion(init_file):
     for root, _, files in os.walk(cwd):
         for f in files:
             m = max(os.path.getmtime(os.path.join(root, f)), m)
-    d = datetime.datetime.utcfromtimestamp(m)
+    d = datetime.datetime.fromtimestamp(m, datetime.timezone.utc)
     return d.strftime("%Y.%m.%d")
 
 
-def getVersionFromArchiveId(git_archive_id='$Format:%ct %d$'):
-    """ Extract the tag if a source is from git archive.
+def getVersionFromArchiveId(git_archive_id='$Format:%ct %(describe:abbrev=10)$'):
+    """Extract the tag if a source is from git archive.
 
-        When source is exported via `git archive`, the git_archive_id init value is modified
-        and placeholders are expanded to the "archived" revision:
+    When source is exported via `git archive`, the git_archive_id init value is modified
+    and placeholders are expanded to the "archived" revision:
 
-            %ct: committer date, UNIX timestamp
-            %d: ref names, like the --decorate option of git-log
+        %ct: committer date, UNIX timestamp
+        %(describe:abbrev=10): git-describe output, always abbreviating to 10 characters of commit ID.
+                               e.g. v3.10.0-850-g5bf957f89
 
-        See man gitattributes(5) and git-log(1) (PRETTY FORMATS) for more details.
+    See man gitattributes(5) and git-log(1) (PRETTY FORMATS) for more details.
     """
     # mangle the magic string to make sure it is not replaced by git archive
-    if not git_archive_id.startswith('$For''mat:'):
+    if not git_archive_id.startswith('$For' + 'mat:'):
         # source was modified by git archive, try to parse the version from
         # the value of git_archive_id
 
-        match = re.search(r'tag:\s*v([^,)]+)', git_archive_id)
-        if match:
+        tstamp, _, describe_output = git_archive_id.strip().partition(' ')
+        if describe_output:
             # archived revision is tagged, use the tag
-            return gitDescribeToPep440(match.group(1))
+            return gitDescribeToPep440(describe_output)
 
         # archived revision is not tagged, use the commit date
-        tstamp = git_archive_id.strip().split()[0]
-        d = datetime.datetime.utcfromtimestamp(int(tstamp))
+        d = datetime.datetime.fromtimestamp(int(tstamp), datetime.timezone.utc)
         return d.strftime('%Y.%m.%d')
     return None
 
@@ -88,7 +90,7 @@ def getVersionFromArchiveId(git_archive_id='$Format:%ct %d$'):
 def getVersion(init_file):
     """
     Return BUILDBOT_VERSION environment variable, content of VERSION file, git
-    tag or 'latest'
+    tag or '0.0.0'  meaning we could not find the version, but the output still has to be valid
     """
 
     try:
@@ -101,7 +103,7 @@ def getVersion(init_file):
         fn = os.path.join(cwd, 'VERSION')
         with open(fn, encoding='utf-8') as f:
             return f.read().strip()
-    except IOError:
+    except OSError:
         pass
 
     version = getVersionFromArchiveId()
@@ -109,7 +111,7 @@ def getVersion(init_file):
         return version
 
     try:
-        p = Popen(['git', 'describe', '--tags', '--always'], stdout=PIPE, stderr=STDOUT, cwd=cwd)  # noqa pylint: disable=consider-using-with
+        p = Popen(['git', 'describe', '--tags', '--always'], stdout=PIPE, stderr=STDOUT, cwd=cwd)
         out = p.communicate()[0]
 
         if (not p.returncode) and out:
@@ -125,7 +127,7 @@ def getVersion(init_file):
         return mTimeVersion(init_file)
     except Exception:
         # bummer. lets report something
-        return "latest"
+        return "0.0.0"
 
 
 version = getVersion(__file__)

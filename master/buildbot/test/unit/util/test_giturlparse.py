@@ -19,13 +19,13 @@ from buildbot.util import giturlparse
 
 
 class Tests(unittest.TestCase):
-
     def test_github(self):
         for u in [
-                "https://github.com/buildbot/buildbot",
-                "https://github.com/buildbot/buildbot.git",
-                "ssh://git@github.com:buildbot/buildbot.git",
-                "git://github.com/buildbot/buildbot.git"]:
+            "https://github.com/buildbot/buildbot",
+            "https://github.com/buildbot/buildbot.git",
+            "ssh://git@github.com:buildbot/buildbot.git",
+            "git://github.com/buildbot/buildbot.git",
+        ]:
             u = giturlparse(u)
             self.assertIn(u.user, (None, "git"))
             self.assertEqual(u.domain, "github.com")
@@ -35,10 +35,11 @@ class Tests(unittest.TestCase):
 
     def test_gitlab(self):
         for u in [
-                "ssh://git@mygitlab.com/group/subgrouptest/testproject.git",
-                "https://mygitlab.com/group/subgrouptest/testproject.git",
-                "git@mygitlab.com:group/subgrouptest/testproject.git",
-                "git://mygitlab.com/group/subgrouptest/testproject.git"]:
+            "ssh://git@mygitlab.com/group/subgrouptest/testproject.git",
+            "https://mygitlab.com/group/subgrouptest/testproject.git",
+            "git@mygitlab.com:group/subgrouptest/testproject.git",
+            "git://mygitlab.com/group/subgrouptest/testproject.git",
+        ]:
             u = giturlparse(u)
             self.assertIsNone(u.port)
             self.assertIn(u.user, (None, "git"))
@@ -48,9 +49,10 @@ class Tests(unittest.TestCase):
 
     def test_gitlab_subsubgroup(self):
         for u in [
-                "ssh://git@mygitlab.com/group/subgrouptest/subsubgroup/testproject.git",
-                "https://mygitlab.com/group/subgrouptest/subsubgroup/testproject.git",
-                "git://mygitlab.com/group/subgrouptest/subsubgroup/testproject.git"]:
+            "ssh://git@mygitlab.com/group/subgrouptest/subsubgroup/testproject.git",
+            "https://mygitlab.com/group/subgrouptest/subsubgroup/testproject.git",
+            "git://mygitlab.com/group/subgrouptest/subsubgroup/testproject.git",
+        ]:
             u = giturlparse(u)
             self.assertIn(u.user, (None, "git"))
             self.assertIsNone(u.port)
@@ -60,8 +62,9 @@ class Tests(unittest.TestCase):
 
     def test_gitlab_user(self):
         for u in [
-                "ssh://buildbot@mygitlab.com:group/subgrouptest/testproject.git",
-                "https://buildbot@mygitlab.com/group/subgrouptest/testproject.git"]:
+            "ssh://buildbot@mygitlab.com:group/subgrouptest/testproject.git",
+            "https://buildbot@mygitlab.com/group/subgrouptest/testproject.git",
+        ]:
             u = giturlparse(u)
             self.assertEqual(u.domain, "mygitlab.com")
             self.assertIsNone(u.port)
@@ -70,8 +73,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(u.repo, "testproject")
 
     def test_gitlab_port(self):
-        for u in [
-                "ssh://buildbot@mygitlab.com:1234/group/subgrouptest/testproject.git"]:
+        for u in ["ssh://buildbot@mygitlab.com:1234/group/subgrouptest/testproject.git"]:
             u = giturlparse(u)
             self.assertEqual(u.domain, "mygitlab.com")
             self.assertEqual(u.port, 1234)
@@ -81,10 +83,10 @@ class Tests(unittest.TestCase):
 
     def test_bitbucket(self):
         for u in [
-                "https://bitbucket.org/org/repo.git",
-                "ssh://git@bitbucket.org:org/repo.git",
-                "git@bitbucket.org:org/repo.git",
-                ]:
+            "https://bitbucket.org/org/repo.git",
+            "ssh://git@bitbucket.org:org/repo.git",
+            "git@bitbucket.org:org/repo.git",
+        ]:
             u = giturlparse(u)
             self.assertIn(u.user, (None, "git"))
             self.assertEqual(u.domain, "bitbucket.org")
@@ -93,11 +95,11 @@ class Tests(unittest.TestCase):
 
     def test_no_owner(self):
         for u in [
-                "https://example.org/repo.git",
-                "ssh://example.org:repo.git",
-                "ssh://git@example.org:repo.git",
-                "git@example.org:repo.git",
-                ]:
+            "https://example.org/repo.git",
+            "ssh://example.org:repo.git",
+            "ssh://git@example.org:repo.git",
+            "git@example.org:repo.git",
+        ]:
             u = giturlparse(u)
             self.assertIn(u.user, (None, "git"))
             self.assertEqual(u.domain, "example.org")
@@ -109,3 +111,16 @@ class Tests(unittest.TestCase):
         self.assertEqual(giturlparse("git://bitbucket.org/org/repo.git").proto, "git")
         self.assertEqual(giturlparse("ssh://git@bitbucket.org:org/repo.git").proto, "ssh")
         self.assertEqual(giturlparse("git@bitbucket.org:org/repo.git").proto, "ssh")
+
+    def test_user_password(self):
+        for u, expected_user, expected_password in [
+            ("https://user@github.com/buildbot/buildbot", "user", None),
+            ("https://user:password@github.com/buildbot/buildbot", "user", "password"),
+        ]:
+            u = giturlparse(u)
+            self.assertEqual(u.user, expected_user)
+            self.assertEqual(u.password, expected_password)
+            self.assertEqual(u.domain, "github.com")
+            self.assertEqual(u.owner, "buildbot")
+            self.assertEqual(u.repo, "buildbot")
+            self.assertIsNone(u.port)

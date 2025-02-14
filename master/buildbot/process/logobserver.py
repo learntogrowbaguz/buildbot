@@ -13,15 +13,19 @@
 #
 # Copyright Buildbot Team Members
 
+from typing import TYPE_CHECKING
 
 from zope.interface import implementer
 
 from buildbot import interfaces
 
+if TYPE_CHECKING:
+    from buildbot.process.build import Build
+    from buildbot.process.log import Log
+
 
 @implementer(interfaces.ILogObserver)
 class LogObserver:
-
     def setStep(self, step):
         self.step = step
 
@@ -48,6 +52,11 @@ class LogObserver:
         pass
 
     def headerReceived(self, data):
+        pass
+
+    def logChunk(
+        self, build: "Build", step: interfaces.IBuildStep, log: "Log", channel: str, text: str
+    ) -> None:
         pass
 
 
@@ -97,7 +106,6 @@ class LogLineObserver(LogObserver):
 
 
 class LineConsumerLogObserver(LogLineObserver):
-
     def __init__(self, consumerFunction):
         super().__init__()
         self.generator = None
@@ -140,7 +148,6 @@ class OutputProgressObserver(LogObserver):
 
 
 class BufferLogObserver(LogObserver):
-
     def __init__(self, wantStdout=True, wantStderr=False):
         super().__init__()
         self.stdout = [] if wantStdout else None

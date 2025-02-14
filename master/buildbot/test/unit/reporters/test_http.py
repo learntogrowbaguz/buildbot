@@ -28,21 +28,19 @@ from buildbot.test.util.reporter import ReporterTestMixin
 
 
 class TestHttpStatusPush(TestReactorMixin, unittest.TestCase, ReporterTestMixin, ConfigErrorsMixin):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.setup_reporter_test()
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True,
-                                             wantMq=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True, wantMq=True)
         yield self.master.startService()
+        self.addCleanup(self.master.stopService)
 
     @defer.inlineCallbacks
     def createReporter(self, auth=("username", "passwd"), headers=None, **kwargs):
         self._http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.master, self,
-            "serv", auth=auth, headers=headers,
-            debug=None, verify=None)
+            self.master, self, "serv", auth=auth, headers=headers, debug=None, verify=None
+        )
 
         interpolated_auth = None
         if auth is not None:
@@ -52,10 +50,6 @@ class TestHttpStatusPush(TestReactorMixin, unittest.TestCase, ReporterTestMixin,
 
         self.sp = HttpStatusPush("serv", auth=interpolated_auth, headers=headers, **kwargs)
         yield self.sp.setServiceParent(self.master)
-
-    @defer.inlineCallbacks
-    def tearDown(self):
-        yield self.master.stopService()
 
     @defer.inlineCallbacks
     def test_basic(self):
@@ -89,8 +83,7 @@ class TestHttpStatusPush(TestReactorMixin, unittest.TestCase, ReporterTestMixin,
     @defer.inlineCallbacks
     def http2XX(self, code, content):
         yield self.createReporter()
-        self._http.expect('post', '', code=code, content=content,
-                          json=BuildDictLookAlike())
+        self._http.expect('post', '', code=code, content=content, json=BuildDictLookAlike())
         build = yield self.insert_build_finished(SUCCESS)
         yield self.sp._got_event(('builds', 20, 'finished'), build)
 

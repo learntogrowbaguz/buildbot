@@ -15,11 +15,10 @@
 
 import json
 import os
+from unittest import mock
 
-import mock
-
+from parameterized import parameterized
 from twisted.internet import defer
-from twisted.python import log
 from twisted.trial import unittest
 
 from buildbot.test.reactor import TestReactorMixin
@@ -29,8 +28,28 @@ from buildbot.www import auth
 from buildbot.www import config
 
 
-class IndexResource(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
+class Utils(unittest.TestCase):
+    def test_serialize_www_frontend_theme_to_css(self):
+        self.maxDiff = None
+        self.assertEqual(
+            config.serialize_www_frontend_theme_to_css({}, indent=4),
+            """\
+--bb-sidebar-background-color: #30426a;
+    --bb-sidebar-header-background-color: #273759;
+    --bb-sidebar-header-text-color: #fff;
+    --bb-sidebar-title-text-color: #627cb7;
+    --bb-sidebar-footer-background-color: #273759;
+    --bb-sidebar-button-text-color: #b2bfdc;
+    --bb-sidebar-button-hover-background-color: #1b263d;
+    --bb-sidebar-button-hover-text-color: #fff;
+    --bb-sidebar-button-current-background-color: #273759;
+    --bb-sidebar-button-current-text-color: #b2bfdc;
+    --bb-sidebar-stripe-hover-color: #e99d1a;
+    --bb-sidebar-stripe-current-color: #8c5e10;""",
+        )
 
+
+class TestConfigResource(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
     def setUp(self):
         self.setup_test_reactor()
 
@@ -39,94 +58,106 @@ class IndexResource(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
         _auth = auth.NoAuth()
         _auth.maybeAutoLogin = mock.Mock()
 
-        custom_versions = [
-            ['test compoent', '0.1.2'], ['test component 2', '0.2.1']]
+        custom_versions = [['test compoent', '0.1.2'], ['test component 2', '0.2.1']]
 
-        master = self.make_master(
-            url='h:/a/b/', auth=_auth, versions=custom_versions)
-        rsrc = config.IndexResource(master, "foo")
+        master = yield self.make_master(url='h:/a/b/', auth=_auth, versions=custom_versions)
+        rsrc = config.ConfigResource(master)
         rsrc.reconfigResource(master.config)
-        rsrc.jinja = mock.Mock()
-        template = mock.Mock()
-        rsrc.jinja.get_template = lambda x: template
-        template.render = lambda configjson, config, custom_templates: configjson
 
-        vjson = [list(v)
-                 for v in rsrc.getEnvironmentVersions()] + custom_versions
+        vjson = [list(v) for v in config.get_environment_versions()] + custom_versions
+
+        res = yield self.render_resource(rsrc, b'/config')
+        res = json.loads(bytes2unicode(res))
+        exp = {
+            "authz": {},
+            "titleURL": "http://buildbot.net/",
+            "versions": vjson,
+            "title": "Buildbot",
+            "auth": {"name": "NoAuth"},
+            "user": {"anonymous": True},
+            "buildbotURL": "h:/a/b/",
+            "multiMaster": False,
+            "port": None,
+        }
+        self.assertEqual(res, exp)
+
+
+class IndexResourceTest(TestReactorMixin, www.WwwTestMixin, unittest.TestCase):
+    def setUp(self):
+        self.setup_test_reactor()
+
+    def get_react_base_path(self):
+        path = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+        for _ in range(0, 4):
+            path = os.path.dirname(path)
+        return os.path.join(path, 'www/base')
+
+    def find_matching_line(self, lines, match, start_i):
+        for i in range(start_i, len(lines)):
+            if match in lines[i]:
+                return i
+        return None
+
+    def extract_config_json(self, res):
+        lines = res.split('\n')
+
+        first_line = self.find_matching_line(lines, '<script id="bb-config">', 0)
+        if first_line is None:
+            raise RuntimeError("Could not find first config line")
+        first_line += 1
+
+        last_line = self.find_matching_line(lines, '</script>', first_line)
+        if last_line is None:
+            raise RuntimeError("Could not find last config line")
+
+        config_json = '\n'.join(lines[first_line:last_line])
+        config_json = config_json.replace('window.buildbotFrontendConfig = ', '').strip()
+        config_json = config_json.strip(';').strip()
+        return json.loads(config_json)
+
+    @parameterized.expand([
+        ('anonymous_user', None, {'anonymous': True}),
+        (
+            'logged_in_user',
+            {"name": 'me', "email": 'me@me.org'},
+            {"email": "me@me.org", "name": "me"},
+        ),
+    ])
+    @defer.inlineCallbacks
+    def test_render(self, name, user_info, expected_user):
+        _auth = auth.NoAuth()
+        _auth.maybeAutoLogin = mock.Mock()
+
+        custom_versions = [['test compoent', '0.1.2'], ['test component 2', '0.2.1']]
+
+        master = yield self.make_master(
+            url='h:/a/b/', auth=_auth, versions=custom_versions, plugins={}
+        )
+        if user_info is not None:
+            master.session.user_info = user_info
+
+        # IndexResource only uses static path to get index.html. In the source checkout
+        # index.html resides not in www/base/public but in www/base. Thus
+        # base path is sent to IndexResource.
+        rsrc = config.IndexResource(master, self.get_react_base_path())
+        rsrc.reconfigResource(master.config)
+
+        vjson = [list(v) for v in config.get_environment_versions()] + custom_versions
 
         res = yield self.render_resource(rsrc, b'/')
-        res = json.loads(bytes2unicode(res))
+        config_json = self.extract_config_json(bytes2unicode(res))
+
         _auth.maybeAutoLogin.assert_called_with(mock.ANY)
         exp = {
             "authz": {},
-            "titleURL": "http://buildbot.net",
+            "titleURL": "http://buildbot.net/",
             "versions": vjson,
             "title": "Buildbot",
             "auth": {"name": "NoAuth"},
-            "user": {"anonymous": True},
+            "user": expected_user,
             "buildbotURL": "h:/a/b/",
             "multiMaster": False,
-            "port": None
+            "port": None,
+            "plugins": {},
         }
-        self.assertEqual(res, exp)
-
-        master.session.user_info = dict(name="me", email="me@me.org")
-        res = yield self.render_resource(rsrc, b'/')
-        res = json.loads(bytes2unicode(res))
-        exp = {
-            "authz": {},
-            "titleURL": "http://buildbot.net",
-            "versions": vjson,
-            "title": "Buildbot",
-            "auth": {"name": "NoAuth"},
-            "user": {"email": "me@me.org", "name": "me"},
-            "buildbotURL": "h:/a/b/",
-            "multiMaster": False,
-            "port": None
-        }
-        self.assertEqual(res, exp)
-
-        master = self.make_master(
-            url='h:/a/c/', auth=_auth, versions=custom_versions)
-        rsrc.reconfigResource(master.config)
-        res = yield self.render_resource(rsrc, b'/')
-        res = json.loads(bytes2unicode(res))
-        exp = {
-            "authz": {},
-            "titleURL": "http://buildbot.net",
-            "versions": vjson,
-            "title": "Buildbot",
-            "auth": {"name": "NoAuth"},
-            "user": {"anonymous": True},
-            "buildbotURL": "h:/a/b/",
-            "multiMaster": False,
-            "port": None
-        }
-        self.assertEqual(res, exp)
-
-    def test_parseCustomTemplateDir(self):
-        exp = {'views/builds.html': '<div>\n</div>'}
-        try:
-            # we make the test work if pypugjs is present or note
-            # It is better than just skip if pypugjs is not there
-            import pypugjs  # pylint: disable=import-outside-toplevel
-            [pypugjs]
-            exp.update({'plugin/views/plugin.html':
-                        '<div class="myclass"><pre>this is customized</pre></div>'})
-        except ImportError:
-            log.msg("Only testing html based template override")
-        template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                    'test_templates_dir')
-        master = self.make_master(url='h:/a/b/')
-        rsrc = config.IndexResource(master, "foo")
-        res = rsrc.parseCustomTemplateDir(template_dir)
-        self.assertEqual(res, exp)
-
-    def test_CustomTemplateDir(self):
-        master = self.make_master(url='h:/a/b/')
-        rsrc = config.IndexResource(master, "foo")
-        master.config.www['custom_templates_dir'] = 'foo'
-        rsrc.parseCustomTemplateDir = mock.Mock(return_value="returnvalue")
-        rsrc.reconfigResource(master.config)
-        self.assertNotIn('custom_templates_dir', master.config.www)
-        self.assertEqual('returnvalue', rsrc.custom_templates)
+        self.assertEqual(config_json, exp)

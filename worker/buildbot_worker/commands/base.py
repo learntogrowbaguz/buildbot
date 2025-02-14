@@ -13,8 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-from __future__ import absolute_import
-from __future__ import print_function
+from __future__ import annotations
 
 from twisted.internet import defer
 from twisted.internet import reactor
@@ -26,7 +25,7 @@ from buildbot_worker.exceptions import AbandonChain
 from buildbot_worker.interfaces import IWorkerCommand
 
 # The following identifier should be updated each time this file is changed
-command_version = "3.1"
+command_version = "3.3"
 
 # version history:
 #  >=1.17: commands are interruptable
@@ -70,11 +69,12 @@ command_version = "3.1"
 #    * "slavedest" command argument renamed to "workerdest" in downloadFile
 #      command.
 #  >= 3.1: rmfile command added to remove a file
+#  >= 3.2: shell command now reports failure reason in case the command timed out.
+#  >= 3.3: shell command now supports max_lines parameter.
 
 
 @implementer(IWorkerCommand)
-class Command(object):
-
+class Command:
     """This class defines one command that can be invoked by the build master.
     The command is executed on the worker side, and always sends back a
     completion message when it finishes. It may also send intermediate status
@@ -131,7 +131,7 @@ class Command(object):
     #  sendStatus(list of tuples) (zero or more)
     #  commandComplete() or commandInterrupted() (one, at end)
 
-    requiredArgs = []
+    requiredArgs: list[str] = []
     debug = False
     interrupted = False
     # set by Builder, cleared on shutdown or when the Deferred fires
@@ -139,17 +139,21 @@ class Command(object):
 
     _reactor = reactor
 
-    def __init__(self, protocol_command, stepId, args):
+    def __init__(self, protocol_command, command_id, args):
         self.protocol_command = protocol_command
-        self.stepId = stepId  # just for logging
+        self.command_id = command_id  # just for logging
         self.args = args
         self.startTime = None
 
         missingArgs = [arg for arg in self.requiredArgs if arg not in args]
         if missingArgs:
-            raise ValueError("{0} is missing args: {1}".format(
-                             self.__class__.__name__, ", ".join(missingArgs)))
+            raise ValueError(
+                "{} is missing args: {}".format(self.__class__.__name__, ", ".join(missingArgs))
+            )
         self.setup(args)
+
+    def log_msg(self, msg, *args):
+        log.msg(f"(command {self.command_id}): {msg}", *args)
 
     def setup(self, args):
         """Override this in a subclass to extract items from the args dict."""
@@ -163,6 +167,7 @@ class Command(object):
             self.sendStatus([("elapsed", util.now(self._reactor) - self.startTime)])
             self.running = False
             return res
+
         d.addBoth(commandComplete)
         return d
 
@@ -177,9 +182,9 @@ class Command(object):
     def sendStatus(self, status):
         """Send a status update to the master."""
         if self.debug:
-            log.msg("sendStatus", status)
+            self.log_msg(f"sendStatus: {status}")
         if not self.running:
-            log.msg("would sendStatus but not .running")
+            self.log_msg("would sendStatus but not .running")
             return
         self.protocol_command.send_update(status)
 
@@ -196,8 +201,7 @@ class Command(object):
 
     def _abandonOnFailure(self, rc):
         if not isinstance(rc, int):
-            log.msg("weird, _abandonOnFailure was given rc={0} ({1})".format(
-                    rc, type(rc)))
+            self.log_msg(f"weird, _abandonOnFailure was given rc={rc} ({type(rc)})")
         assert isinstance(rc, int)
         if rc != 0:
             raise AbandonChain(rc)
@@ -207,8 +211,8 @@ class Command(object):
         self.sendStatus([('rc', 0)])
 
     def _checkAbandoned(self, why):
-        log.msg("_checkAbandoned", why)
+        self.log_msg("_checkAbandoned", why)
         why.trap(AbandonChain)
-        log.msg(" abandoning chain", why.value)
+        self.log_msg(" abandoning chain", why.value)
         self.sendStatus([('rc', why.value.args[0])])
         return None

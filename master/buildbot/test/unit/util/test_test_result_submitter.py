@@ -23,27 +23,24 @@ from buildbot.util.test_result_submitter import TestResultSubmitter
 
 
 class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True, wantDb=True)
+        self.master = yield fakemaster.make_master(self, wantData=True, wantDb=True)
         yield self.master.startService()
+        self.addCleanup(self.master.stopService)
 
-        self.master.db.insertTestData([
+        yield self.master.db.insert_test_data([
             fakedb.Worker(id=47, name='linux'),
             fakedb.Buildset(id=20),
             fakedb.Builder(id=88, name='b1'),
             fakedb.BuildRequest(id=41, buildsetid=20, builderid=88),
             fakedb.Master(id=88),
-            fakedb.Build(id=30, buildrequestid=41, number=7, masterid=88,
-                         builderid=88, workerid=47),
+            fakedb.Build(
+                id=30, buildrequestid=41, number=7, masterid=88, builderid=88, workerid=47
+            ),
             fakedb.Step(id=131, number=132, name='step132', buildid=30),
         ])
-
-    @defer.inlineCallbacks
-    def tearDown(self):
-        yield self.master.stopService()
 
     @defer.inlineCallbacks
     def test_complete_empty(self):
@@ -52,34 +49,44 @@ class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
 
         setid = sub.get_test_result_set_id()
         sets = yield self.master.data.get(('builds', 30, 'test_result_sets'))
-        self.assertEqual(list(sets), [{
-            'test_result_setid': setid,
-            'builderid': 88,
-            'buildid': 30,
-            'stepid': 131,
-            'description': 'desc',
-            'category': 'cat',
-            'value_unit': 'unit',
-            'tests_passed': None,
-            'tests_failed': None,
-            'complete': False
-        }])
+        self.assertEqual(
+            list(sets),
+            [
+                {
+                    'test_result_setid': setid,
+                    'builderid': 88,
+                    'buildid': 30,
+                    'stepid': 131,
+                    'description': 'desc',
+                    'category': 'cat',
+                    'value_unit': 'unit',
+                    'tests_passed': None,
+                    'tests_failed': None,
+                    'complete': False,
+                }
+            ],
+        )
 
         yield sub.finish()
 
         sets = yield self.master.data.get(('builds', 30, 'test_result_sets'))
-        self.assertEqual(list(sets), [{
-            'test_result_setid': setid,
-            'builderid': 88,
-            'buildid': 30,
-            'stepid': 131,
-            'description': 'desc',
-            'category': 'cat',
-            'value_unit': 'unit',
-            'tests_passed': None,
-            'tests_failed': None,
-            'complete': True
-        }])
+        self.assertEqual(
+            list(sets),
+            [
+                {
+                    'test_result_setid': setid,
+                    'builderid': 88,
+                    'buildid': 30,
+                    'stepid': 131,
+                    'description': 'desc',
+                    'category': 'cat',
+                    'value_unit': 'unit',
+                    'tests_passed': None,
+                    'tests_failed': None,
+                    'complete': True,
+                }
+            ],
+        )
 
     @defer.inlineCallbacks
     def test_submit_result(self):
@@ -91,30 +98,40 @@ class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
         setid = sub.get_test_result_set_id()
 
         sets = yield self.master.data.get(('builds', 30, 'test_result_sets'))
-        self.assertEqual(list(sets), [{
-            'test_result_setid': setid,
-            'builderid': 88,
-            'buildid': 30,
-            'stepid': 131,
-            'description': 'desc',
-            'category': 'cat',
-            'value_unit': 'unit',
-            'tests_passed': None,
-            'tests_failed': None,
-            'complete': True
-        }])
+        self.assertEqual(
+            list(sets),
+            [
+                {
+                    'test_result_setid': setid,
+                    'builderid': 88,
+                    'buildid': 30,
+                    'stepid': 131,
+                    'description': 'desc',
+                    'category': 'cat',
+                    'value_unit': 'unit',
+                    'tests_passed': None,
+                    'tests_failed': None,
+                    'complete': True,
+                }
+            ],
+        )
 
         results = yield self.master.data.get(('test_result_sets', setid, 'results'))
-        self.assertEqual(list(results), [{
-            'test_resultid': 1002,
-            'builderid': 88,
-            'test_result_setid': setid,
-            'test_name': 'name1',
-            'test_code_path': None,
-            'duration_ns': None,
-            'line': None,
-            'value': '1'
-        }])
+        self.assertEqual(
+            list(results),
+            [
+                {
+                    'test_resultid': 1,
+                    'builderid': 88,
+                    'test_result_setid': setid,
+                    'test_name': 'name1',
+                    'test_code_path': None,
+                    'duration_ns': None,
+                    'line': None,
+                    'value': '1',
+                }
+            ],
+        )
 
     def filter_results_value_name(self, results):
         return [{'test_name': r['test_name'], 'value': r['value']} for r in results]
@@ -151,14 +168,17 @@ class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
 
         results = yield self.master.data.get(('test_result_sets', setid, 'results'))
         results = self.filter_results_value_name(results)
-        self.assertEqual(results, [
-            {'test_name': 'name1', 'value': '1'},
-            {'test_name': 'name2', 'value': '2'},
-            {'test_name': 'name3', 'value': '3'},
-            {'test_name': 'name4', 'value': '4'},
-            {'test_name': 'name5', 'value': '5'},
-            {'test_name': 'name6', 'value': '6'},
-        ])
+        self.assertEqual(
+            results,
+            [
+                {'test_name': 'name1', 'value': '1'},
+                {'test_name': 'name2', 'value': '2'},
+                {'test_name': 'name3', 'value': '3'},
+                {'test_name': 'name4', 'value': '4'},
+                {'test_name': 'name5', 'value': '5'},
+                {'test_name': 'name6', 'value': '6'},
+            ],
+        )
 
     @defer.inlineCallbacks
     def test_batchs_last_batch_not_full(self):
@@ -175,13 +195,16 @@ class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
 
         results = yield self.master.data.get(('test_result_sets', setid, 'results'))
         results = self.filter_results_value_name(results)
-        self.assertEqual(results, [
-            {'test_name': 'name1', 'value': '1'},
-            {'test_name': 'name2', 'value': '2'},
-            {'test_name': 'name3', 'value': '3'},
-            {'test_name': 'name4', 'value': '4'},
-            {'test_name': 'name5', 'value': '5'},
-        ])
+        self.assertEqual(
+            results,
+            [
+                {'test_name': 'name1', 'value': '1'},
+                {'test_name': 'name2', 'value': '2'},
+                {'test_name': 'name3', 'value': '3'},
+                {'test_name': 'name4', 'value': '4'},
+                {'test_name': 'name5', 'value': '5'},
+            ],
+        )
 
     @defer.inlineCallbacks
     def test_counts_pass_fail(self):
@@ -196,18 +219,23 @@ class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
 
         setid = sub.get_test_result_set_id()
         sets = yield self.master.data.get(('builds', 30, 'test_result_sets'))
-        self.assertEqual(list(sets), [{
-            'test_result_setid': setid,
-            'builderid': 88,
-            'buildid': 30,
-            'stepid': 131,
-            'description': 'desc',
-            'category': 'pass_fail',
-            'value_unit': 'boolean',
-            'tests_passed': 2,
-            'tests_failed': 3,
-            'complete': True
-        }])
+        self.assertEqual(
+            list(sets),
+            [
+                {
+                    'test_result_setid': setid,
+                    'builderid': 88,
+                    'buildid': 30,
+                    'stepid': 131,
+                    'description': 'desc',
+                    'category': 'pass_fail',
+                    'value_unit': 'boolean',
+                    'tests_passed': 2,
+                    'tests_failed': 3,
+                    'complete': True,
+                }
+            ],
+        )
 
     @defer.inlineCallbacks
     def test_counts_pass_fail_invalid_values(self):
@@ -222,29 +250,37 @@ class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
 
         setid = sub.get_test_result_set_id()
         sets = yield self.master.data.get(('builds', 30, 'test_result_sets'))
-        self.assertEqual(list(sets), [{
-            'test_result_setid': setid,
-            'builderid': 88,
-            'buildid': 30,
-            'stepid': 131,
-            'description': 'desc',
-            'category': 'pass_fail',
-            'value_unit': 'boolean',
-            'tests_passed': 2,
-            'tests_failed': 2,
-            'complete': True
-        }])
+        self.assertEqual(
+            list(sets),
+            [
+                {
+                    'test_result_setid': setid,
+                    'builderid': 88,
+                    'buildid': 30,
+                    'stepid': 131,
+                    'description': 'desc',
+                    'category': 'pass_fail',
+                    'value_unit': 'boolean',
+                    'tests_passed': 2,
+                    'tests_failed': 2,
+                    'complete': True,
+                }
+            ],
+        )
 
         # also check whether we preserve the "invalid" values in the database.
         results = yield self.master.data.get(('test_result_sets', setid, 'results'))
         results = self.filter_results_value_name(results)
-        self.assertEqual(results, [
-            {'test_name': 'name1', 'value': '0'},
-            {'test_name': 'name2', 'value': '0'},
-            {'test_name': 'name3', 'value': '1'},
-            {'test_name': 'name4', 'value': '1'},
-            {'test_name': 'name5', 'value': 'invalid'},
-        ])
+        self.assertEqual(
+            results,
+            [
+                {'test_name': 'name1', 'value': '0'},
+                {'test_name': 'name2', 'value': '0'},
+                {'test_name': 'name3', 'value': '1'},
+                {'test_name': 'name4', 'value': '1'},
+                {'test_name': 'name5', 'value': 'invalid'},
+            ],
+        )
 
         self.flushLoggedErrors(ValueError)
 
@@ -261,28 +297,36 @@ class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
 
         setid = sub.get_test_result_set_id()
         sets = yield self.master.data.get(('builds', 30, 'test_result_sets'))
-        self.assertEqual(list(sets), [{
-            'test_result_setid': setid,
-            'builderid': 88,
-            'buildid': 30,
-            'stepid': 131,
-            'description': 'desc',
-            'category': 'pass_only',
-            'value_unit': 'some_unit',
-            'tests_passed': 5,
-            'tests_failed': 0,
-            'complete': True
-        }])
+        self.assertEqual(
+            list(sets),
+            [
+                {
+                    'test_result_setid': setid,
+                    'builderid': 88,
+                    'buildid': 30,
+                    'stepid': 131,
+                    'description': 'desc',
+                    'category': 'pass_only',
+                    'value_unit': 'some_unit',
+                    'tests_passed': 5,
+                    'tests_failed': 0,
+                    'complete': True,
+                }
+            ],
+        )
 
         results = yield self.master.data.get(('test_result_sets', setid, 'results'))
         results = self.filter_results_value_name(results)
-        self.assertEqual(results, [
-            {'test_name': 'name1', 'value': 'string1'},
-            {'test_name': 'name2', 'value': 'string2'},
-            {'test_name': 'name3', 'value': 'string3'},
-            {'test_name': 'name4', 'value': 'string4'},
-            {'test_name': 'name5', 'value': 'string5'},
-        ])
+        self.assertEqual(
+            results,
+            [
+                {'test_name': 'name1', 'value': 'string1'},
+                {'test_name': 'name2', 'value': 'string2'},
+                {'test_name': 'name3', 'value': 'string3'},
+                {'test_name': 'name4', 'value': 'string4'},
+                {'test_name': 'name5', 'value': 'string5'},
+            ],
+        )
 
         self.flushLoggedErrors(ValueError)
 
@@ -299,27 +343,35 @@ class TestTestResultSubmitter(TestReactorMixin, unittest.TestCase):
 
         setid = sub.get_test_result_set_id()
         sets = yield self.master.data.get(('builds', 30, 'test_result_sets'))
-        self.assertEqual(list(sets), [{
-            'test_result_setid': setid,
-            'builderid': 88,
-            'buildid': 30,
-            'stepid': 131,
-            'description': 'desc',
-            'category': 'fail_only',
-            'value_unit': 'some_unit',
-            'tests_passed': 0,
-            'tests_failed': 5,
-            'complete': True
-        }])
+        self.assertEqual(
+            list(sets),
+            [
+                {
+                    'test_result_setid': setid,
+                    'builderid': 88,
+                    'buildid': 30,
+                    'stepid': 131,
+                    'description': 'desc',
+                    'category': 'fail_only',
+                    'value_unit': 'some_unit',
+                    'tests_passed': 0,
+                    'tests_failed': 5,
+                    'complete': True,
+                }
+            ],
+        )
 
         results = yield self.master.data.get(('test_result_sets', setid, 'results'))
         results = self.filter_results_value_name(results)
-        self.assertEqual(results, [
-            {'test_name': 'name1', 'value': 'string1'},
-            {'test_name': 'name2', 'value': 'string2'},
-            {'test_name': 'name3', 'value': 'string3'},
-            {'test_name': 'name4', 'value': 'string4'},
-            {'test_name': 'name5', 'value': 'string5'},
-        ])
+        self.assertEqual(
+            results,
+            [
+                {'test_name': 'name1', 'value': 'string1'},
+                {'test_name': 'name2', 'value': 'string2'},
+                {'test_name': 'name3', 'value': 'string3'},
+                {'test_name': 'name4', 'value': 'string4'},
+                {'test_name': 'name5', 'value': 'string5'},
+            ],
+        )
 
         self.flushLoggedErrors(ValueError)

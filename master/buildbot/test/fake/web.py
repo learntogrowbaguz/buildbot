@@ -14,26 +14,26 @@
 # Copyright Buildbot Team Members
 
 from io import BytesIO
-
-from mock import Mock
+from unittest.mock import Mock
 
 from twisted.internet import defer
 from twisted.web import server
 
 from buildbot.test.fake import fakemaster
+from buildbot.util.twisted import async_to_deferred
 
 
-def fakeMasterForHooks(testcase):
+@async_to_deferred
+async def fakeMasterForHooks(testcase) -> fakemaster.FakeMaster:
     # testcase must derive from TestReactorMixin and setup_test_reactor()
     # must be called before calling this function.
 
-    master = fakemaster.make_master(testcase, wantData=True)
+    master = await fakemaster.make_master(testcase, wantData=True)
     master.www = Mock()
     return master
 
 
 class FakeRequest(Mock):
-
     """
     A fake Twisted Web Request object, including some pointers to the
     buildmaster and an addChange method on that master which will append its
@@ -100,8 +100,9 @@ class FakeRequest(Mock):
             self.finish()
             return self.deferred
         elif isinstance(result, str):
-            raise ValueError(f"{resource.render!r} should return bytes, not {type(result)}: "
-                             f"{result!r}")
+            raise ValueError(
+                f"{resource.render!r} should return bytes, not {type(result)}: {result!r}"
+            )
         elif result is server.NOT_DONE_YET:
             return self.deferred
         else:

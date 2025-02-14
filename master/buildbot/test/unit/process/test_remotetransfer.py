@@ -17,8 +17,7 @@
 import os
 import stat
 import tempfile
-
-from mock import Mock
+from unittest.mock import Mock
 
 from twisted.trial import unittest
 
@@ -27,7 +26,6 @@ from buildbot.process import remotetransfer
 
 # Test buildbot.steps.remotetransfer.FileWriter class.
 class TestFileWriter(unittest.TestCase):
-
     # test FileWriter.__init__() method.
 
     def testInit(self):
@@ -68,7 +66,6 @@ class TestFileWriter(unittest.TestCase):
 
 
 class TestStringFileWriter(unittest.TestCase):
-
     def testBasic(self):
         sfw = remotetransfer.StringFileWriter()
         # StringFileWriter takes bytes or native string and outputs native strings

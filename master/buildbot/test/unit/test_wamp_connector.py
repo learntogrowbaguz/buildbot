@@ -12,11 +12,11 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
+from __future__ import annotations
+
+from unittest import mock
 
 from parameterized import parameterized
-
-import mock
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
@@ -32,12 +32,13 @@ class FakeConfig:
 
 
 class FakeService(service.AsyncMultiService):
-    name = "fakeWampService"
+    name: str | None = "fakeWampService"  # type: ignore[assignment]
     # Fake wamp service
     # just call the maker on demand by the test
 
-    def __init__(self, url, realm, make, extra=None,
-                 debug=False, debug_wamp=False, debug_app=False):
+    def __init__(
+        self, url, realm, make, extra=None, debug=False, debug_wamp=False, debug_app=False
+    ):
         super().__init__()
         self.make = make
         self.extra = extra
@@ -56,11 +57,10 @@ class TestedWampConnector(connector.WampConnector):
 
 
 class WampConnector(TestReactorMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        master = fakemaster.make_master(self)
+        master = yield fakemaster.make_master(self)
         self.connector = TestedWampConnector()
 
         config = FakeConfig({'type': 'wamp', 'router_url': "wss://foo", 'realm': "bb"})
@@ -84,8 +84,9 @@ class WampConnector(TestReactorMixin, unittest.TestCase):
     def test_reconfig_does_not_allow_config_change(self, attr_name, attr_value):
         mq_dict = {'type': 'wamp', 'router_url': "wss://foo", 'realm': "bb"}
         mq_dict[attr_name] = attr_value
-        with self.assertRaises(ValueError,
-                               msg="Cannot use different wamp settings when reconfiguring"):
+        with self.assertRaises(
+            ValueError, msg="Cannot use different wamp settings when reconfiguring"
+        ):
             yield self.connector.reconfigServiceWithBuildbotConfig(FakeConfig(mq_dict))
 
     @defer.inlineCallbacks
@@ -94,24 +95,21 @@ class WampConnector(TestReactorMixin, unittest.TestCase):
         self.connector.app.gotConnection()
         yield d
         # 824 is the hardcoded masterid of fakemaster
-        self.connector.service.publish.assert_called_with(
-            "org.buildbot.824.connected")
+        self.connector.service.publish.assert_called_with("org.buildbot.824.connected")
 
     @defer.inlineCallbacks
     def test_subscribe(self):
         d = self.connector.subscribe('callback', 'topic', 'options')
         self.connector.app.gotConnection()
         yield d
-        self.connector.service.subscribe.assert_called_with(
-            'callback', 'topic', 'options')
+        self.connector.service.subscribe.assert_called_with('callback', 'topic', 'options')
 
     @defer.inlineCallbacks
     def test_publish(self):
         d = self.connector.publish('topic', 'data', 'options')
         self.connector.app.gotConnection()
         yield d
-        self.connector.service.publish.assert_called_with(
-            'topic', 'data', options='options')
+        self.connector.service.publish.assert_called_with('topic', 'data', options='options')
 
     @defer.inlineCallbacks
     def test_OnLeave(self):

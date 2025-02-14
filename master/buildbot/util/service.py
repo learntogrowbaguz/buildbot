@@ -13,7 +13,11 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
 import hashlib
+from typing import ClassVar
+from typing import Sequence
 
 from twisted.application import service
 from twisted.internet import defer
@@ -22,14 +26,16 @@ from twisted.python import log
 from twisted.python import reflect
 from twisted.python.reflect import accumulateClassList
 
+import buildbot.config
 from buildbot import util
+from buildbot.process.properties import Properties
 from buildbot.util import bytes2unicode
 from buildbot.util import config
 from buildbot.util import unicode2bytes
+from buildbot.warnings import warn_deprecated
 
 
 class ReconfigurableServiceMixin:
-
     reconfig_priority = 128
 
     @defer.inlineCallbacks
@@ -38,9 +44,9 @@ class ReconfigurableServiceMixin:
             return
 
         # get a list of child services to reconfigure
-        reconfigurable_services = [svc
-                                   for svc in self
-                                   if isinstance(svc, ReconfigurableServiceMixin)]
+        reconfigurable_services = [
+            svc for svc in self if isinstance(svc, ReconfigurableServiceMixin)
+        ]
 
         # sort by priority
         reconfigurable_services.sort(key=lambda svc: -svc.reconfig_priority)
@@ -49,9 +55,8 @@ class ReconfigurableServiceMixin:
             yield svc.reconfigServiceWithBuildbotConfig(new_config)
 
 
-# twisted 16's Service is now an new style class, better put everybody new style
-# to catch issues even on twisted < 16
 class AsyncService(service.Service):
+    name: str | None  # type: ignore[assignment]
 
     # service.Service.setServiceParent does not wait for neither disownServiceParent nor addService
     # to complete
@@ -79,7 +84,6 @@ class AsyncService(service.Service):
 
 
 class AsyncMultiService(AsyncService, service.MultiService):
-
     def startService(self):
         # Do NOT use super() here.
         # The method resolution order would cause MultiService.startService() to
@@ -116,8 +120,7 @@ class AsyncMultiService(AsyncService, service.MultiService):
     def addService(self, service):
         if service.name is not None:
             if service.name in self.namedServices:
-                raise RuntimeError("cannot have two services with same name"
-                                   f" '{service.name}'")
+                raise RuntimeError(f"cannot have two services with same name '{service.name}'")
             self.namedServices[service.name] = service
         self.services.append(service)
         if self.running:
@@ -127,12 +130,32 @@ class AsyncMultiService(AsyncService, service.MultiService):
         return defer.succeed(None)
 
 
+class IndependentAsyncMultiService(AsyncMultiService):
+    # Used in cases where lifetime must be managed differently than the parent
+
+    name: str | None  # type: ignore[assignment]
+    _master: None
+
+    def set_master(self, master):
+        self._master = master
+
+    @property
+    def master(self):
+        return self._master
+
+
 class MasterService(AsyncMultiService):
     # master service is the service that stops the master property recursion
 
     @property
     def master(self):
         return self
+
+    def get_db_config(self, new_config) -> defer.Deferred:
+        p = Properties()
+        p.master = self
+
+        return p.render(new_config.db)
 
 
 class SharedService(AsyncMultiService):
@@ -175,12 +198,13 @@ class SharedService(AsyncMultiService):
         return cls.__name__ + "_" + _hash.hexdigest()
 
 
-class BuildbotService(AsyncMultiService, config.ConfiguredMixin, util.ComparableMixin,
-                      ReconfigurableServiceMixin):
-    compare_attrs = ('name', '_config_args', '_config_kwargs')
-    name = None
+class BuildbotService(
+    AsyncMultiService, config.ConfiguredMixin, util.ComparableMixin, ReconfigurableServiceMixin
+):
+    compare_attrs: ClassVar[Sequence[str]] = ('name', '_config_args', '_config_kwargs')
+    name: str | None = None  # type: ignore[assignment]
     configured = False
-    objectid = None
+    objectid: int | None = None
 
     def __init__(self, *args, **kwargs):
         name = kwargs.pop("name", None)
@@ -196,10 +220,12 @@ class BuildbotService(AsyncMultiService, config.ConfiguredMixin, util.Comparable
 
     def getConfigDict(self):
         _type = type(self)
-        return {'name': self.name,
-                'class': _type.__module__ + "." + _type.__name__,
-                'args': self._config_args,
-                'kwargs': self._config_kwargs}
+        return {
+            'name': self.name,
+            'class': _type.__module__ + "." + _type.__name__,
+            'args': self._config_args,
+            'kwargs': self._config_kwargs,
+        }
 
     @defer.inlineCallbacks
     def reconfigServiceWithSibling(self, sibling):
@@ -210,8 +236,7 @@ class BuildbotService(AsyncMultiService, config.ConfiguredMixin, util.Comparable
             return None
         self.configured = True
         # render renderables in parallel
-        # Properties import to resolve cyclic import issue
-        from buildbot.process.properties import Properties
+
         p = Properties()
         p.master = self.master
         # render renderables in parallel
@@ -226,8 +251,7 @@ class BuildbotService(AsyncMultiService, config.ConfiguredMixin, util.Comparable
                 setattr(self, k, v)
             kwargs[k] = v
 
-        d = yield self.reconfigService(*sibling._config_args,
-                                       **kwargs)
+        d = yield self.reconfigService(*sibling._config_args, **kwargs)
         return d
 
     def canReconfigWithSibling(self, sibling):
@@ -253,8 +277,6 @@ class BuildbotService(AsyncMultiService, config.ConfiguredMixin, util.Comparable
         return defer.succeed(None)
 
     def renderSecrets(self, *args):
-        # Properties import to resolve cyclic import issue
-        from buildbot.process.properties import Properties
         p = Properties()
         p.master = self.master
 
@@ -265,7 +287,6 @@ class BuildbotService(AsyncMultiService, config.ConfiguredMixin, util.Comparable
 
 
 class ClusteredBuildbotService(BuildbotService):
-
     """
     ClusteredBuildbotService-es are meant to be executed on a single
     master only. When starting such a service, by means of "yield startService",
@@ -276,15 +297,15 @@ class ClusteredBuildbotService(BuildbotService):
       stops, and takes the job back.
     - return after it starts else.
     """
-    compare_attrs = ('name',)
+
+    compare_attrs: ClassVar[Sequence[str]] = ('name',)
 
     POLL_INTERVAL_SEC = 5 * 60  # 5 minutes
 
-    serviceid = None
+    serviceid: int | None = None
     active = False
 
     def __init__(self, *args, **kwargs):
-
         self.serviceid = None
         self.active = False
         self._activityPollCall = None
@@ -362,9 +383,7 @@ class ClusteredBuildbotService(BuildbotService):
 
     def _startActivityPolling(self):
         self._activityPollCall = task.LoopingCall(self._activityPoll)
-        # plug in a clock if we have one, for tests
-        if hasattr(self, 'clock'):
-            self._activityPollCall.clock = self.clock
+        self._activityPollCall.clock = self.master.reactor
 
         d = self._activityPollCall.start(self.POLL_INTERVAL_SEC, now=True)
         self._activityPollDeferred = d
@@ -435,30 +454,40 @@ class ClusteredBuildbotService(BuildbotService):
             log.err(_why=msg)
 
 
-class BuildbotServiceManager(AsyncMultiService, config.ConfiguredMixin,
-                             ReconfigurableServiceMixin):
+class BuildbotServiceManager(AsyncMultiService, config.ConfiguredMixin, ReconfigurableServiceMixin):
     config_attr = "services"
-    name = "services"
+    name: str | None = "services"  # type: ignore[assignment]
 
     def getConfigDict(self):
-        return {'name': self.name,
-                'childs': [v.getConfigDict()
-                           for v in self.namedServices.values()]}
+        return {
+            'name': self.name,
+            'childs': [v.getConfigDict() for v in self.namedServices.values()],
+        }
+
+    def get_service_config(self, new_config) -> dict[str, AsyncService]:
+        new_config_attr = getattr(new_config, self.config_attr)
+        if isinstance(new_config_attr, list):
+            service_dict = {}
+            for s in new_config_attr:
+                if s.name in service_dict:
+                    buildbot.config.error(
+                        f"Two services share the same name '{s.name}'."
+                        "This will result in only one service being configured."
+                    )
+
+                service_dict[s.name] = s
+            return service_dict
+        if isinstance(new_config_attr, dict):
+            return new_config_attr
+
+        raise TypeError(f"config.{self.config_attr} should be a list or dictionary")
 
     @defer.inlineCallbacks
     def reconfigServiceWithBuildbotConfig(self, new_config):
-
         # arrange childs by name
         old_by_name = self.namedServices
         old_set = set(old_by_name)
-        new_config_attr = getattr(new_config, self.config_attr)
-        if isinstance(new_config_attr, list):
-            new_by_name = {s.name: s
-                           for s in new_config_attr}
-        elif isinstance(new_config_attr, dict):
-            new_by_name = new_config_attr
-        else:
-            raise TypeError(f"config.{self.config_attr} should be a list or dictionary")
+        new_by_name = self.get_service_config(new_config)
         new_set = set(new_by_name)
 
         # calculate new childs, by name, and removed childs
@@ -477,8 +506,9 @@ class BuildbotServiceManager(AsyncMultiService, config.ConfiguredMixin,
                 added_names.add(n)
 
         if removed_names or added_names:
-            log.msg(f"adding {len(added_names)} new {self.config_attr}, "
-                    f"removing {len(removed_names)}")
+            log.msg(
+                f"adding {len(added_names)} new {self.config_attr}, removing {len(removed_names)}"
+            )
 
             for n in removed_names:
                 child = old_by_name[n]
@@ -496,8 +526,7 @@ class BuildbotServiceManager(AsyncMultiService, config.ConfiguredMixin,
                 # setup service's objectid
                 if hasattr(child, 'objectid'):
                     class_name = f'{child.__class__.__module__}.{child.__class__.__name__}'
-                    objectid = yield self.master.db.state.getObjectId(
-                        child.name, class_name)
+                    objectid = yield self.master.db.state.getObjectId(child.name, class_name)
                     child.objectid = objectid
                 yield child.setServiceParent(self)
 
@@ -507,8 +536,7 @@ class BuildbotServiceManager(AsyncMultiService, config.ConfiguredMixin,
         # we avoid calling it again by selecting
         # in reconfigurable_services, services
         # that were not added just now
-        reconfigurable_services = [svc for svc in self
-                                   if svc.name not in added_names]
+        reconfigurable_services = [svc for svc in self if svc.name not in added_names]
         # sort by priority
         reconfigurable_services.sort(key=lambda svc: -svc.reconfig_priority)
 
@@ -523,11 +551,20 @@ class BuildbotServiceManager(AsyncMultiService, config.ConfiguredMixin,
                 # so we implement switch of child when the service raises NotImplementedError
                 # Note this means that self will stop, and sibling will take ownership
                 # means that we have a small time where the service is unavailable.
+                warn_deprecated(
+                    '4.3.0',
+                    'raising NotImplementedError from '
+                    'reconfigServiceWithSibling() or reconfigService() has been deprecated',
+                )
+
                 yield svc.disownServiceParent()
                 config_sibling.objectid = svc.objectid
                 yield config_sibling.setServiceParent(self)
             except Exception as e:  # pragma: no cover
-                log.err(e, f'Got exception while reconfiguring {self} child service {svc.name}:\n'
-                        f'current config dict:\n{svc.getConfigDict()}\n'
-                        f'new config dict:\n{config_sibling.getConfigDict()}')
+                log.err(
+                    e,
+                    f'Got exception while reconfiguring {self} child service {svc.name}:\n'
+                    f'current config dict:\n{svc.getConfigDict()}\n'
+                    f'new config dict:\n{config_sibling.getConfigDict()}',
+                )
                 raise

@@ -13,7 +13,7 @@
 #
 # Portions Copyright Buildbot Team Members
 # Portions Copyright 2013 Cray Inc.
-
+from __future__ import annotations
 
 import uuid
 
@@ -31,13 +31,12 @@ TEST_UUIDS = {
 }
 
 
-class FakeNovaClient():
+class FakeNovaClient:
     region_name = ""
 
 
 # Parts used from novaclient
-class Client():
-
+class Client:
     def __init__(self, version, session):
         self.glance = ItemManager()
         self.glance._add_items([Image(TEST_UUIDS['image'], 'CirrOS 0.3.4', 13287936)])
@@ -52,8 +51,7 @@ class Client():
         self.client = FakeNovaClient()
 
 
-class ItemManager():
-
+class ItemManager:
     def __init__(self):
         self._items = {}
 
@@ -70,12 +68,17 @@ class ItemManager():
         else:
             raise NotFound
 
+    def find_image(self, name):
+        for item in self.list():
+            if name in (item.name, item.id):
+                return item
+        raise NotFound
+
 
 # This exists because Image needs an attribute that isn't supported by
 # namedtuple. And once the base code is there might as well have Volume and
 # Snapshot use it too.
-class Item():
-
+class Item:
     def __init__(self, id, name, size):
         self.id = id
         self.name = name
@@ -83,7 +86,6 @@ class Item():
 
 
 class Image(Item):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         setattr(self, 'OS-EXT-IMG-SIZE:size', self.size)
@@ -101,12 +103,12 @@ class Snapshot(Item):
     pass
 
 
-class Servers():
+class Servers:
     fail_to_get = False
     fail_to_start = False
     gets_until_active = 3
     gets_until_disappears = 1
-    instances = {}
+    instances: dict[uuid.UUID, Instance] = {}
 
     def create(self, *boot_args, **boot_kwargs):
         instance_id = uuid.uuid4()
@@ -151,8 +153,7 @@ class Servers():
 
 
 # This is returned by Servers.create().
-class Instance():
-
+class Instance:
     def __init__(self, id, servers, boot_args, boot_kwargs):
         self.id = id
         self.servers = servers
@@ -169,6 +170,7 @@ class Instance():
     def delete(self):
         self.servers.delete(self.id)
 
+
 # Parts used from novaclient.exceptions.
 
 
@@ -178,6 +180,7 @@ class NotFound(Exception):
 
 class NoUniqueMatch(Exception):
     pass
+
 
 # Parts used from keystoneauth1.
 
@@ -190,21 +193,26 @@ def get_plugin_loader(plugin_type):
     raise ValueError(f"plugin_type '{plugin_type}' is not supported")
 
 
-class PasswordLoader():
-
+class PasswordLoader:
     def load_from_options(self, **kwargs):
         return PasswordAuth(**kwargs)
 
 
-class TokenLoader():
+class TokenLoader:
     def load_from_options(self, **kwargs):
         return TokenAuth(**kwargs)
 
 
-class PasswordAuth():
-
-    def __init__(self, auth_url, password, project_name, username, user_domain_name=None,
-                 project_domain_name=None):
+class PasswordAuth:
+    def __init__(
+        self,
+        auth_url,
+        password,
+        project_name,
+        username,
+        user_domain_name=None,
+        project_domain_name=None,
+    ):
         self.auth_url = auth_url
         self.password = password
         self.project_name = project_name
@@ -213,7 +221,7 @@ class PasswordAuth():
         self.project_domain_name = project_domain_name
 
 
-class TokenAuth():
+class TokenAuth:
     def __init__(self, auth_url, token):
         self.auth_url = auth_url
         self.token = token
@@ -223,7 +231,6 @@ class TokenAuth():
         self.project_domain_name = 'token'
 
 
-class Session():
-
+class Session:
     def __init__(self, auth):
         self.auth = auth

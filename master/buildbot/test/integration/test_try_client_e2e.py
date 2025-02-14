@@ -19,6 +19,7 @@ import os
 from twisted.internet import defer
 from twisted.internet import reactor
 
+from buildbot.test.util.decorators import flaky
 from buildbot.test.util.integration import RunMasterBase
 
 
@@ -27,39 +28,40 @@ class TryClientE2E(RunMasterBase):
     timeout = 15
 
     @defer.inlineCallbacks
+    def setup_config(self):
+        c = {}
+        from buildbot.config import BuilderConfig
+        from buildbot.plugins import schedulers
+        from buildbot.plugins import steps
+        from buildbot.process.factory import BuildFactory
+
+        c['schedulers'] = [
+            schedulers.Try_Userpass(
+                name="try", builderNames=["testy"], port='tcp:0', userpass=[("alice", "pw1")]
+            )
+        ]
+        f = BuildFactory()
+        f.addStep(steps.ShellCommand(command='echo hello'))
+        c['builders'] = [BuilderConfig(name="testy", workernames=["local1"], factory=f)]
+        yield self.setup_master(c)
+
+    @flaky(bugNumber=7084)
+    @defer.inlineCallbacks
     def test_shell(self):
-        yield self.setupConfig(masterConfig())
+        yield self.setup_config()
 
         def trigger_callback():
             port = self.master.pbmanager.dispatchers['tcp:0'].port.getHost().port
 
             def thd():
-                os.system(f"buildbot try --connect=pb --master=127.0.0.1:{port} -b testy "
-                          "--property=foo:bar --username=alice --passwd=pw1 --vc=none")
+                os.system(
+                    f"buildbot try --connect=pb --master=127.0.0.1:{port} -b testy "
+                    "--property=foo:bar --username=alice --passwd=pw1 --vc=none"
+                )
+
             reactor.callInThread(thd)
 
-        build = yield self.doForceBuild(wantSteps=True, triggerCallback=trigger_callback,
-                                        wantLogs=True, wantProperties=True)
+        build = yield self.doForceBuild(
+            wantSteps=True, triggerCallback=trigger_callback, wantLogs=True, wantProperties=True
+        )
         self.assertEqual(build['buildid'], 1)
-
-
-# master configuration
-def masterConfig():
-    c = {}
-    from buildbot.config import BuilderConfig
-    from buildbot.process.factory import BuildFactory
-    from buildbot.plugins import steps, schedulers
-
-    c['schedulers'] = [
-        schedulers.Try_Userpass(name="try",
-                                builderNames=["testy"],
-                                port='tcp:0',
-                                userpass=[("alice", "pw1")])
-    ]
-    f = BuildFactory()
-    f.addStep(steps.ShellCommand(command='echo hello'))
-    c['builders'] = [
-        BuilderConfig(name="testy",
-                      workernames=["local1"],
-                      factory=f)]
-    return c

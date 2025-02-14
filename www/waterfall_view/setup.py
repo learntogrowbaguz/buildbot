@@ -19,30 +19,25 @@ try:
     from buildbot_pkg import setup_www_plugin
 except ImportError:
     import sys
-    print('Please install buildbot_pkg module in order to install that '
-          'package, or use the pre-build .whl modules available on pypi',
-          file=sys.stderr)
-    sys.exit(1)
 
+    print(
+        'Please install buildbot_pkg module in order to install that '
+        'package, or use the pre-build .whl modules available on pypi',
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 setup_www_plugin(
     name='buildbot-waterfall-view',
     description='Buildbot Waterfall View plugin',
-    author=u'Pierre Tardy',
-    author_email=u'tardyp@gmail.com',
+    author='Pierre Tardy',
+    author_email='tardyp@gmail.com',
     url='http://buildbot.net/',
     packages=['buildbot_waterfall_view'],
-    package_data={
-        '': [
-            'VERSION',
-            'static/*'
-        ]
-    },
+    package_data={'': ['VERSION', 'static/*', 'static/assets/*']},
     entry_points="""
         [buildbot.www]
         waterfall_view = buildbot_waterfall_view:ep
     """,
-    classifiers=[
-        'License :: OSI Approved :: GNU General Public License v2 (GPLv2)'
-    ],
+    classifiers=['License :: OSI Approved :: GNU General Public License v2 (GPLv2)'],
 )

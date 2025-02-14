@@ -16,7 +16,9 @@
 from twisted.internet import defer
 from twisted.trial import unittest
 
+from buildbot.test.fake import fakemaster
 from buildbot.test.fake import httpclientservice as fakehttpclientservice
+from buildbot.test.reactor import TestReactorMixin
 from buildbot.util import httpclientservice
 from buildbot.util import service
 
@@ -24,33 +26,33 @@ from buildbot.util import service
 class myTestedService(service.BuildbotService):
     name = 'myTestedService'
 
-    @defer.inlineCallbacks
     def reconfigService(self, baseurl):
-        self._http = yield httpclientservice.HTTPClientService.getService(self.master, baseurl)
+        self._http = httpclientservice.HTTPSession(self.master.httpservice, baseurl)
 
     @defer.inlineCallbacks
     def doGetRoot(self):
         res = yield self._http.get("/")
         # note that at this point, only the http response headers are received
         if res.code != 200:
-            raise Exception(f"{res.code}: server did not succeed")
+            raise RuntimeError(f"{res.code}: server did not succeed")
         res_json = yield res.json()
         # res.json() returns a deferred to represent the time needed to fetch the entire body
         return res_json
 
 
-class Test(unittest.TestCase):
-
+class Test(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def setUp(self):
+        yield self.setup_test_reactor()
+
         baseurl = 'http://127.0.0.1:8080'
-        self.parent = service.MasterService()
-        self._http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.parent, self, baseurl)
+        master = yield fakemaster.make_master(self)
+
+        self._http = yield fakehttpclientservice.HTTPClientService.getService(master, self, baseurl)
         self.tested = myTestedService(baseurl)
 
-        yield self.tested.setServiceParent(self.parent)
-        yield self.parent.startService()
+        yield self.tested.setServiceParent(master)
+        yield master.startService()
 
     @defer.inlineCallbacks
     def test_root(self):

@@ -12,8 +12,9 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
+from __future__ import annotations
 
-
+from twisted import trial
 from twisted.internet import defer
 
 from buildbot.data import base
@@ -29,18 +30,16 @@ class EndpointMixin(TestReactorMixin, interfaces.InterfaceTests):
     # test mixin for testing Endpoint subclasses
 
     # class being tested
-    endpointClass = None
+    endpointClass: type[base.Endpoint] | None = None
 
     # the corresponding resource type - this will be instantiated at
     # self.data.rtypes[rtype.type] and self.rtype
-    resourceTypeClass = None
+    resourceTypeClass: type[base.ResourceType] | None = None
 
+    @defer.inlineCallbacks
     def setUpEndpoint(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantMq=True, wantDb=True,
-                                             wantData=True)
-        self.db = self.master.db
-        self.mq = self.master.mq
+        self.master = yield fakemaster.make_master(self, wantMq=True, wantDb=True, wantData=True)
         self.data = self.master.data
         self.matcher = pathmatch.Matcher()
 
@@ -56,18 +55,16 @@ class EndpointMixin(TestReactorMixin, interfaces.InterfaceTests):
             if pp == '/':
                 continue
             if not pp.startswith('/') or pp.endswith('/'):
-                raise AssertionError(f"invalid pattern {repr(pp)}")
-        pathPatterns = [tuple(pp.split('/')[1:])
-                        for pp in pathPatterns]
+                raise AssertionError(f"invalid pattern {pp!r}")
+        pathPatterns = [tuple(pp.split('/')[1:]) for pp in pathPatterns]
         for pp in pathPatterns:
             self.matcher[pp] = self.ep
 
         self.pathArgs = [
             {arg.split(':', 1)[1] for arg in pp if ':' in arg}
-            for pp in pathPatterns if pp is not None]
-
-    def tearDownEndpoint(self):
-        pass
+            for pp in pathPatterns
+            if pp is not None
+        ]
 
     def validateData(self, object):
         validation.verifyData(self, self.rtype.entityType, {}, object)
@@ -83,7 +80,7 @@ class EndpointMixin(TestReactorMixin, interfaces.InterfaceTests):
         self.assertIdentical(endpoint, self.ep)
         rv = yield endpoint.get(resultSpec, kwargs)
 
-        if self.ep.isCollection:
+        if self.ep.kind == base.EndpointKind.COLLECTION:
             self.assertIsInstance(rv, (list, base.ListResult))
         else:
             self.assertIsInstance(rv, (dict, type(None)))
@@ -100,9 +97,17 @@ class EndpointMixin(TestReactorMixin, interfaces.InterfaceTests):
     # interface tests
 
     def test_get_spec(self):
-        @self.assertArgSpecMatches(self.ep.get)
-        def get(self, resultSpec, kwargs):
-            pass
+        try:
+
+            @self.assertArgSpecMatches(self.ep.get)
+            def get(self, resultSpec, kwargs):
+                pass
+
+        except trial.unittest.FailTest:
+
+            @self.assertArgSpecMatches(self.ep.get)
+            def get(self, result_spec, kwargs):
+                pass
 
     def test_control_spec(self):
         @self.assertArgSpecMatches(self.ep.control)

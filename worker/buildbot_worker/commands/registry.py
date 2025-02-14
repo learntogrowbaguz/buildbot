@@ -13,9 +13,6 @@
 #
 # Copyright Buildbot Team Members
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 import buildbot_worker.commands.fs
 import buildbot_worker.commands.shell
 import buildbot_worker.commands.transfer
@@ -35,7 +32,7 @@ commandRegistry = {
     "stat": buildbot_worker.commands.fs.StatFile,
     "glob": buildbot_worker.commands.fs.GlobPath,
     "listdir": buildbot_worker.commands.fs.ListDir,
-    "rmfile": buildbot_worker.commands.fs.RemoveFile
+    "rmfile": buildbot_worker.commands.fs.RemoveFile,
 }
 
 

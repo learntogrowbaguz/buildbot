@@ -13,12 +13,8 @@
 #
 # Copyright Buildbot Team Members
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 
 class AbandonChain(Exception):
-
     """A series of chained steps can raise this exception to indicate that
     one of the intermediate RunProcesses has failed, such that there is no
     point in running the remainder. The first argument to the exception
@@ -26,4 +22,4 @@ class AbandonChain(Exception):
     The second is an optional error message."""
 
     def __repr__(self):
-        return "<AbandonChain rc={0}>".format(self.args[0])
+        return f"<AbandonChain rc={self.args[0]}>"

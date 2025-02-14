@@ -14,6 +14,8 @@
 # Copyright Buildbot Team Members
 
 import base64
+from typing import ClassVar
+from typing import Sequence
 
 from twisted.application import internet
 from twisted.internet import defer
@@ -40,7 +42,6 @@ from buildbot.util import ssl
 
 
 class UsageError(ValueError):
-
     # pylint: disable=useless-super-delegation
     def __init__(self, string="Invalid usage", *more):
         # This is not useless as we change the default value of an argument.
@@ -66,12 +67,11 @@ _irc_colors = (
     'ROYAL_BLUE',
     'PINK',
     'DARK_GRAY',
-    'LIGHT_GRAY'
+    'LIGHT_GRAY',
 )
 
 
 class IRCChannel(Channel):
-
     def __init__(self, bot, channel):
         super().__init__(bot, channel)
         self.muted = False
@@ -91,7 +91,6 @@ class IRCChannel(Channel):
 
 
 class IRCContact(Contact):
-
     def __init__(self, user, channel=None):
         if channel is None:
             channel = user
@@ -132,26 +131,31 @@ class IRCContact(Contact):
         args = self.splitArgs(args)
         for channel in args:
             self.bot.join(channel)
-    command_JOIN.usage = "join #channel - join a channel #channel"
+
+    command_JOIN.usage = "join #channel - join a channel #channel"  # type: ignore[attr-defined]
 
     @dangerousCommand
     def command_LEAVE(self, args, **kwargs):
-        """join a channel"""
+        """leave a channel"""
         args = self.splitArgs(args)
         for channel in args:
             self.bot.leave(channel)
-    command_LEAVE.usage = "leave #channel - leave a channel #channel"
+
+    command_LEAVE.usage = "leave #channel - leave a channel #channel"  # type: ignore[attr-defined]
 
     @defer.inlineCallbacks
     def command_MUTE(self, args, **kwargs):
         if (yield self.op_required('mute')):
-            yield self.send("Only channel operators or explicitly allowed users "
-                            f"can mute me here, {self.user_id}... Blah, blah, blah...")
+            yield self.send(
+                "Only channel operators or explicitly allowed users "
+                f"can mute me here, {self.user_id}... Blah, blah, blah..."
+            )
             return
         # The order of these is important! ;)
         yield self.send("Shutting up for now.")
         self.channel.muted = True
-    command_MUTE.usage = "mute - suppress all messages until a corresponding 'unmute' is issued"
+
+    command_MUTE.usage = "mute - suppress all messages until a corresponding 'unmute' is issued"  # type: ignore[attr-defined]
 
     @defer.inlineCallbacks
     def command_UNMUTE(self, args, **kwargs):
@@ -163,18 +167,21 @@ class IRCContact(Contact):
             yield self.send("I'm baaaaaaaaaaack!")
         else:
             yield self.send(
-                "No one had told me to be quiet, but it's the thought that counts, right?")
-    command_UNMUTE.usage = "unmute - disable a previous 'mute'"
+                "No one had told me to be quiet, but it's the thought that counts, right?"
+            )
+
+    command_UNMUTE.usage = "unmute - disable a previous 'mute'"  # type: ignore[attr-defined]
 
     @defer.inlineCallbacks
     @Contact.overrideCommand
     def command_NOTIFY(self, args, **kwargs):
         if not self.is_private_chat:
             argv = self.splitArgs(args)
-            if argv and argv[0] in ('on', 'off') and \
-                    (yield self.op_required('notify')):
-                yield self.send("Only channel operators can change notified events for this "
-                                f"channel. And you, {self.user_id}, are neither!")
+            if argv and argv[0] in ('on', 'off') and (yield self.op_required('notify')):
+                yield self.send(
+                    "Only channel operators can change notified events for this "
+                    f"channel. And you, {self.user_id}, are neither!"
+                )
                 return
         super().command_NOTIFY(args, **kwargs)
 
@@ -194,19 +201,28 @@ class IRCContact(Contact):
 
     def command_HUSTLE(self, args):
         self.act("does the hustle")
-    command_HUSTLE.usage = "dondon on #qutebrowser: qutebrowser-bb needs to learn to do the hustle"
+
+    command_HUSTLE.usage = "dondon on #qutebrowser: qutebrowser-bb needs to learn to do the hustle"  # type: ignore[attr-defined]
 
 
 class IrcStatusBot(StatusBot, irc.IRCClient):
-
-    """I represent the buildbot to an IRC server.
-    """
+    """I represent the buildbot to an IRC server."""
 
     contactClass = IRCContact
     channelClass = IRCChannel
 
-    def __init__(self, nickname, password, join_channels, pm_to_nicks,
-                 noticeOnChannel, *args, useColors=False, useSASL=False, **kwargs):
+    def __init__(
+        self,
+        nickname,
+        password,
+        join_channels,
+        pm_to_nicks,
+        noticeOnChannel,
+        *args,
+        useColors=False,
+        useSASL=False,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.nickname = nickname
         self.join_channels = join_channels
@@ -216,8 +232,7 @@ class IrcStatusBot(StatusBot, irc.IRCClient):
         self.noticeOnChannel = noticeOnChannel
         self.useColors = useColors
         self.useSASL = useSASL
-        self._keepAliveCall = task.LoopingCall(
-            lambda: self.ping(self.nickname))
+        self._keepAliveCall = task.LoopingCall(lambda: self.ping(self.nickname))
         self._channel_names = {}
 
     def register(self, nickname, hostname="foo", servername="bar"):
@@ -230,9 +245,7 @@ class IrcStatusBot(StatusBot, irc.IRCClient):
         self.setNick(nickname)
         if self.username is None:
             self.username = nickname
-        self.sendLine(
-            f"USER {self.username} {hostname} {servername} :{self.realname}"
-        )
+        self.sendLine(f"USER {self.username} {hostname} {servername} :{self.realname}")
         if self.password is not None:
             self.sendLine("AUTHENTICATE PLAIN")
 
@@ -283,7 +296,7 @@ class IrcStatusBot(StatusBot, irc.IRCClient):
         # is '#twisted' or the like.
         contact = self.getContact(user=user, channel=channel)
         if message.startswith(f"{self.nickname}:") or message.startswith(f"{self.nickname},"):
-            message = message[len(f"{self.nickname}:"):]
+            message = message[len(f"{self.nickname}:") :]
             d = contact.handleMessage(message)
             return d
         return None
@@ -404,17 +417,29 @@ class IrcStatusBot(StatusBot, irc.IRCClient):
 
 
 class IrcStatusFactory(ThrottledClientFactory):
-    protocol = IrcStatusBot
+    protocol = IrcStatusBot  # type: ignore[assignment]
 
     shuttingDown = False
     p = None
 
-    def __init__(self, nickname, password, join_channels, pm_to_nicks, authz, tags, notify_events,
-                 noticeOnChannel=False,
-                 useRevisions=False, showBlameList=False,
-                 useSASL=False,
-                 parent=None,
-                 lostDelay=None, failedDelay=None, useColors=True):
+    def __init__(
+        self,
+        nickname,
+        password,
+        join_channels,
+        pm_to_nicks,
+        authz,
+        tags,
+        notify_events,
+        noticeOnChannel=False,
+        useRevisions=False,
+        showBlameList=False,
+        useSASL=False,
+        parent=None,
+        lostDelay=None,
+        failedDelay=None,
+        useColors=True,
+    ):
         super().__init__(lostDelay=lostDelay, failedDelay=failedDelay)
         self.nickname = nickname
         self.password = password
@@ -444,14 +469,20 @@ class IrcStatusFactory(ThrottledClientFactory):
         if self.p:
             self.p.disownServiceParent()
 
-        p = self.protocol(self.nickname, self.password,
-                          self.join_channels, self.pm_to_nicks,
-                          self.noticeOnChannel, self.authz,
-                          self.tags, self.notify_events,
-                          useColors=self.useColors,
-                          useSASL=self.useSASL,
-                          useRevisions=self.useRevisions,
-                          showBlameList=self.showBlameList)
+        p = self.protocol(
+            self.nickname,
+            self.password,
+            self.join_channels,
+            self.pm_to_nicks,
+            self.noticeOnChannel,
+            self.authz,
+            self.tags,
+            self.notify_events,
+            useColors=self.useColors,
+            useSASL=self.useSASL,
+            useRevisions=self.useRevisions,
+            showBlameList=self.showBlameList,
+        )
         p.setServiceParent(self.parent)
         p.factory = self
         self.p = p
@@ -477,20 +508,49 @@ class IRC(service.BuildbotService):
     name = "IRC"
     in_test_harness = False
     f = None
-    compare_attrs = ("host", "port", "nick", "password", "authz",
-                     "channels", "pm_to_nicks", "useSSL",
-                     "useSASL",
-                     "useRevisions", "tags", "useColors",
-                     "allowForce", "allowShutdown",
-                     "lostDelay", "failedDelay")
+    compare_attrs: ClassVar[Sequence[str]] = (
+        "host",
+        "port",
+        "nick",
+        "password",
+        "authz",
+        "channels",
+        "pm_to_nicks",
+        "useSSL",
+        "useSASL",
+        "useRevisions",
+        "tags",
+        "useColors",
+        "allowForce",
+        "allowShutdown",
+        "lostDelay",
+        "failedDelay",
+    )
     secrets = ['password']
 
-    def checkConfig(self, host, nick, channels, pm_to_nicks=None, port=6667,
-                    allowForce=None, tags=None, password=None, notify_events=None,
-                    showBlameList=True, useRevisions=False, useSSL=False,
-                    useSASL=False, lostDelay=None, failedDelay=None, useColors=True,
-                    allowShutdown=None, noticeOnChannel=False, authz=None, **kwargs
-                    ):
+    def checkConfig(
+        self,
+        host,
+        nick,
+        channels,
+        pm_to_nicks=None,
+        port=6667,
+        allowForce=None,
+        tags=None,
+        password=None,
+        notify_events=None,
+        showBlameList=True,
+        useRevisions=False,
+        useSSL=False,
+        useSASL=False,
+        lostDelay=None,
+        failedDelay=None,
+        useColors=True,
+        allowShutdown=None,
+        noticeOnChannel=False,
+        authz=None,
+        **kwargs,
+    ):
         deprecated_params = list(kwargs)
         if deprecated_params:
             config.error(f'{",".join(deprecated_params)} are deprecated')
@@ -500,34 +560,49 @@ class IRC(service.BuildbotService):
             if authz is not None:
                 config.error("If you specify authz, you must not use allowForce anymore")
             if allowForce not in (True, False):
-                config.error(f"allowForce must be boolean, not {repr(allowForce)}")
+                config.error(f"allowForce must be boolean, not {allowForce!r}")
             log.msg('IRC: allowForce is deprecated: use authz instead')
         if allowShutdown is not None:
             if authz is not None:
                 config.error("If you specify authz, you must not use allowShutdown anymore")
             if allowShutdown not in (True, False):
-                config.error(f"allowShutdown must be boolean, not {repr(allowShutdown)}")
+                config.error(f"allowShutdown must be boolean, not {allowShutdown!r}")
             log.msg('IRC: allowShutdown is deprecated: use authz instead')
         # ###
 
         if noticeOnChannel not in (True, False):
-            config.error(f"noticeOnChannel must be boolean, not {repr(noticeOnChannel)}")
+            config.error(f"noticeOnChannel must be boolean, not {noticeOnChannel!r}")
         if useSSL:
             # SSL client needs a ClientContextFactory for some SSL mumbo-jumbo
             ssl.ensureHasSSL(self.__class__.__name__)
         if authz is not None:
             for acl in authz.values():
                 if not isinstance(acl, (list, tuple, bool)):
-                    config.error(
-                        "authz values must be bool or a list of nicks")
+                    config.error("authz values must be bool or a list of nicks")
 
-    def reconfigService(self, host, nick, channels, pm_to_nicks=None, port=6667,
-                        allowForce=None, tags=None, password=None, notify_events=None,
-                        showBlameList=True, useRevisions=False, useSSL=False,
-                        useSASL=False, lostDelay=None, failedDelay=None, useColors=True,
-                        allowShutdown=None, noticeOnChannel=False, authz=None, **kwargs
-                        ):
-
+    def reconfigService(
+        self,
+        host,
+        nick,
+        channels,
+        pm_to_nicks=None,
+        port=6667,
+        allowForce=None,
+        tags=None,
+        password=None,
+        notify_events=None,
+        showBlameList=True,
+        useRevisions=False,
+        useSSL=False,
+        useSASL=False,
+        lostDelay=None,
+        failedDelay=None,
+        useColors=True,
+        allowShutdown=None,
+        noticeOnChannel=False,
+        authz=None,
+        **kwargs,
+    ):
         # need to stash these so we can detect changes later
         self.host = host
         self.port = port
@@ -560,17 +635,23 @@ class IRC(service.BuildbotService):
         # changed.
         if self.f is not None:
             self.f.shutdown()
-        self.f = IrcStatusFactory(self.nick, self.password,
-                                  self.join_channels, self.pm_to_nicks,
-                                  self.authz, self.tags,
-                                  self.notify_events, parent=self,
-                                  noticeOnChannel=noticeOnChannel,
-                                  useRevisions=useRevisions,
-                                  useSASL=useSASL,
-                                  showBlameList=showBlameList,
-                                  lostDelay=lostDelay,
-                                  failedDelay=failedDelay,
-                                  useColors=useColors)
+        self.f = IrcStatusFactory(
+            self.nick,
+            self.password,
+            self.join_channels,
+            self.pm_to_nicks,
+            self.authz,
+            self.tags,
+            self.notify_events,
+            parent=self,
+            noticeOnChannel=noticeOnChannel,
+            useRevisions=useRevisions,
+            useSASL=useSASL,
+            showBlameList=showBlameList,
+            lostDelay=lostDelay,
+            failedDelay=failedDelay,
+            useColors=useColors,
+        )
 
         if useSSL:
             cf = ssl.ClientContextFactory()

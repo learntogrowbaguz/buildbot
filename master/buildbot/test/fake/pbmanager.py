@@ -20,7 +20,6 @@ from buildbot.util import service
 
 
 class FakePBManager(service.AsyncMultiService):
-
     def __init__(self):
         super().__init__()
         self.setName("fake-pbmanager")
@@ -41,11 +40,10 @@ class FakePBManager(service.AsyncMultiService):
 
 
 class FakeRegistration:
-
     def __init__(self, pbmanager, portstr, username):
         self._portstr = portstr
         self._username = username
         self._pbmanager = pbmanager
 
     def unregister(self):
-        self._pbmanager._unregister(self._portstr, self._username)
+        return self._pbmanager._unregister(self._portstr, self._username)

@@ -20,15 +20,28 @@ from twisted.internet import task
 
 from buildbot.test.util.integration import RunMasterBase
 
+
 # This integration test helps reproduce http://trac.buildbot.net/ticket/3024
 # we make sure that we can reconfigure the master while build is running
-
-
 class SetPropertyFromCommand(RunMasterBase):
+    @defer.inlineCallbacks
+    def setup_config(self):
+        c = {}
+        from buildbot.plugins import schedulers
+        from buildbot.plugins import steps
+        from buildbot.plugins import util
+
+        c['schedulers'] = [schedulers.ForceScheduler(name="force", builderNames=["testy"])]
+
+        f = util.BuildFactory()
+        f.addStep(steps.SetPropertyFromCommand(property="test", command=["echo", "foo"]))
+        c['builders'] = [util.BuilderConfig(name="testy", workernames=["local1"], factory=f)]
+
+        yield self.setup_master(c)
 
     @defer.inlineCallbacks
     def test_setProp(self):
-        yield self.setupConfig(masterConfig())
+        yield self.setup_config()
         oldNewLog = self.master.data.updates.addLog
 
         @defer.inlineCallbacks
@@ -36,14 +49,14 @@ class SetPropertyFromCommand(RunMasterBase):
             # Simulate db delay. We usually don't test race conditions
             # with delays, but in integrations test, that would be pretty
             # tricky
-            yield task.deferLater(reactor, .1, lambda: None)
+            yield task.deferLater(reactor, 0.1, lambda: None)
             res = yield oldNewLog(*arg, **kw)
             return res
+
         self.master.data.updates.addLog = newLog
         build = yield self.doForceBuild(wantProperties=True)
 
-        self.assertEqual(
-            build['properties']['test'], ('foo', 'SetPropertyFromCommand Step'))
+        self.assertEqual(build['properties']['test'], ('foo', 'SetPropertyFromCommand Step'))
 
 
 class SetPropertyFromCommandPB(SetPropertyFromCommand):
@@ -52,30 +65,3 @@ class SetPropertyFromCommandPB(SetPropertyFromCommand):
 
 class SetPropertyFromCommandMsgPack(SetPropertyFromCommand):
     proto = "msgpack"
-
-
-# master configuration
-
-num_reconfig = 0
-
-
-def masterConfig():
-    global num_reconfig
-    num_reconfig += 1
-    c = {}
-    from buildbot.plugins import schedulers, steps, util
-
-    c['schedulers'] = [
-        schedulers.ForceScheduler(
-            name="force",
-            builderNames=["testy"])]
-
-    f = util.BuildFactory()
-    f.addStep(steps.SetPropertyFromCommand(
-        property="test", command=["echo", "foo"]))
-    c['builders'] = [
-        util.BuilderConfig(name="testy",
-                           workernames=["local1"],
-                           factory=f)]
-
-    return c

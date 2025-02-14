@@ -2,9 +2,6 @@
 Tests for `buildbot_worker.util._hangcheck`.
 """
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 from twisted.internet import defer
 from twisted.internet import reactor
 from twisted.internet.endpoints import TCP4ClientEndpoint
@@ -15,10 +12,10 @@ from twisted.internet.task import Clock
 from twisted.python.failure import Failure
 from twisted.spread.pb import PBClientFactory
 from twisted.trial.unittest import TestCase
-from twisted.web.server import Site
 from twisted.web.static import Data
 
-from ..backports import SynchronousTestCase
+from buildbot_worker.test.util.site import SiteWithClose
+
 from ..util import HangCheckFactory
 from ..util._hangcheck import HangCheckProtocol
 
@@ -36,14 +33,19 @@ def assert_clock_idle(case, clock):
     calls.
     """
     case.assertEqual(
-        clock.getDelayedCalls(), [],
+        clock.getDelayedCalls(),
+        [],
     )
 
 
-class HangCheckTests(SynchronousTestCase):
+class HangCheckTests(TestCase):
     """
     Tests for HangCheckProtocol.
     """
+
+    # On slower machines with high CPU oversubscription this test may take longer to run than
+    # the default timeout.
+    timeout = 20
 
     def test_disconnects(self):
         """
@@ -138,9 +140,7 @@ class HangCheckTests(SynchronousTestCase):
         transport.protocol = protocol
         protocol.makeConnection(transport)
         reason = ConnectionDone("Bye.")
-        protocol.connectionLost(
-            Failure(reason)
-        )
+        protocol.connectionLost(Failure(reason))
 
         self.assertTrue(wrapped_protocol.closed)
         self.assertEqual(
@@ -161,9 +161,7 @@ class HangCheckTests(SynchronousTestCase):
 
         transport.protocol = protocol
         protocol.makeConnection(transport)
-        protocol.connectionLost(
-            Failure(ConnectionDone("Bye."))
-        )
+        protocol.connectionLost(Failure(ConnectionDone("Bye.")))
 
         assert_clock_idle(self, clock)
 
@@ -181,9 +179,7 @@ class HangCheckTests(SynchronousTestCase):
         transport.protocol = protocol
         protocol.makeConnection(transport)
         protocol.dataReceived(b"some-data")
-        protocol.connectionLost(
-            Failure(ConnectionDone("Bye."))
-        )
+        protocol.connectionLost(Failure(ConnectionDone("Bye.")))
 
         assert_clock_idle(self, clock)
 
@@ -217,9 +213,9 @@ def connected_server_and_client(case, server_factory, client_factory):
 
 
 class EndToEndHangCheckTests(TestCase):
-    """
-    End to end test for HangCheckProtocol.
-    """
+    # On slower machines with high CPU oversubscription this test may take longer to run than
+    # the default timeout.
+    timeout = 20
 
     @defer.inlineCallbacks
     def test_http(self):
@@ -229,14 +225,15 @@ class EndToEndHangCheckTests(TestCase):
         """
         result = defer.Deferred()
 
-        site = Site(Data("", "text/plain"))
-        client = HangCheckFactory(
-            PBClientFactory(), lambda: result.callback(None))
+        site = SiteWithClose(Data("", "text/plain"))
+        client = HangCheckFactory(PBClientFactory(), lambda: result.callback(None))
 
         self.patch(HangCheckProtocol, '_HUNG_CONNECTION_TIMEOUT', 0.1)
 
         d_connected = connected_server_and_client(
-            self, site, client,
+            self,
+            site,
+            client,
         )
 
         def cancel_all():
@@ -247,8 +244,10 @@ class EndToEndHangCheckTests(TestCase):
 
         try:
             yield result
-        except defer.CancelledError:
-            raise Exception('Timeout did not happen')
+        except defer.CancelledError as e:
+            raise RuntimeError('Timeout did not happen') from e
         finally:
             d_connected.cancel()
             timer.cancel()
+
+        yield site.close_connections()

@@ -13,6 +13,9 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from twisted.internet import defer
 
@@ -20,65 +23,72 @@ from buildbot.data import base
 from buildbot.data import patches
 from buildbot.data import types
 
+if TYPE_CHECKING:
+    from typing import Any
 
-def _db2data(ss):
-    data = {
-        'ssid': ss['ssid'],
-        'branch': ss['branch'],
-        'revision': ss['revision'],
-        'project': ss['project'],
-        'repository': ss['repository'],
-        'codebase': ss['codebase'],
-        'created_at': ss['created_at'],
+    from buildbot.db.sourcestamps import SourceStampModel
+
+
+def _db2data(ss: SourceStampModel):
+    data: dict[str, Any] = {
+        'ssid': ss.ssid,
+        'branch': ss.branch,
+        'revision': ss.revision,
+        'project': ss.project,
+        'repository': ss.repository,
+        'codebase': ss.codebase,
+        'created_at': ss.created_at,
         'patch': None,
     }
-    if ss['patch_body']:
+    if ss.patch is not None:
         data['patch'] = {
-            'patchid': ss['patchid'],
-            'level': ss['patch_level'],
-            'subdir': ss['patch_subdir'],
-            'author': ss['patch_author'],
-            'comment': ss['patch_comment'],
-            'body': ss['patch_body'],
+            'patchid': ss.patch.patchid,
+            'level': ss.patch.level,
+            'subdir': ss.patch.subdir,
+            'author': ss.patch.author,
+            'comment': ss.patch.comment,
+            'body': ss.patch.body,
         }
     return data
 
 
 class SourceStampEndpoint(base.Endpoint):
-
-    isCollection = False
+    kind = base.EndpointKind.SINGLE
     pathPatterns = """
         /sourcestamps/n:ssid
     """
 
     @defer.inlineCallbacks
     def get(self, resultSpec, kwargs):
-        ssdict = yield self.master.db.sourcestamps.getSourceStamp(
-            kwargs['ssid'])
+        ssdict = yield self.master.db.sourcestamps.getSourceStamp(kwargs['ssid'])
         return _db2data(ssdict) if ssdict else None
 
 
 class SourceStampsEndpoint(base.Endpoint):
-
-    isCollection = True
+    kind = base.EndpointKind.COLLECTION
     pathPatterns = """
         /sourcestamps
+        /buildsets/:buildsetid/sourcestamps
     """
     rootLinkName = 'sourcestamps'
 
     @defer.inlineCallbacks
     def get(self, resultSpec, kwargs):
-        return [_db2data(ssdict) for ssdict in
-            (yield self.master.db.sourcestamps.getSourceStamps())]
+        buildsetid = kwargs.get("buildsetid")
+        if buildsetid is not None:
+            sourcestamps = yield self.master.db.sourcestamps.get_sourcestamps_for_buildset(
+                buildsetid
+            )
+        else:
+            sourcestamps = yield self.master.db.sourcestamps.getSourceStamps()
+
+        return [_db2data(ssdict) for ssdict in sourcestamps]
 
 
 class SourceStamp(base.ResourceType):
-
     name = "sourcestamp"
     plural = "sourcestamps"
     endpoints = [SourceStampEndpoint, SourceStampsEndpoint]
-    keyField = 'ssid'
-    subresources = ["Change"]
 
     class EntityType(types.Entity):
         ssid = types.Integer()
@@ -89,4 +99,5 @@ class SourceStamp(base.ResourceType):
         codebase = types.String()
         patch = types.NoneOk(patches.Patch.entityType)
         created_at = types.DateTime()
-    entityType = EntityType(name, 'Sourcestamp')
+
+    entityType = EntityType(name)

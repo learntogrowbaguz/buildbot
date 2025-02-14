@@ -17,7 +17,6 @@
 import base64
 
 import msgpack
-
 from autobahn.twisted.websocket import WebSocketServerFactory
 from autobahn.twisted.websocket import WebSocketServerProtocol
 from autobahn.websocket.types import ConnectionDeny
@@ -261,10 +260,7 @@ class BuildbotWebSocketServerProtocol(WebSocketServerProtocol):
         result = None
         is_exception = False
         try:
-            self.contains_msg_key(msg, ('command_id',))
-
-            if "args" not in msg:
-                raise KeyError('message did not contain obligatory "args" key')
+            self.contains_msg_key(msg, ('command_id', 'args'))
 
             if msg['command_id'] not in self.command_id_to_writer_map:
                 raise KeyError('unknown "command_id"')
@@ -277,11 +273,7 @@ class BuildbotWebSocketServerProtocol(WebSocketServerProtocol):
         self.send_response_msg(msg, result, is_exception)
 
     def send_response_msg(self, msg, result, is_exception):
-        dict_output = {
-            'op': 'response',
-            'seq_number': msg['seq_number'],
-            'result': result
-        }
+        dict_output = {'op': 'response', 'seq_number': msg['seq_number'], 'result': result}
         if is_exception:
             dict_output['is_exception'] = True
 
@@ -334,8 +326,7 @@ class BuildbotWebSocketServerProtocol(WebSocketServerProtocol):
             # stop waiting for a response of this command
             del self.seq_num_to_waiters_map[seq_number]
         else:
-            self.send_response_msg(msg, f"Command {msg['op']} does not exist.",
-                                   is_exception=True)
+            self.send_response_msg(msg, f"Command {msg['op']} does not exist.", is_exception=True)
 
     @defer.inlineCallbacks
     def get_message_result(self, msg):
@@ -383,7 +374,7 @@ class BuildbotWebSocketServerProtocol(WebSocketServerProtocol):
             else:
                 authentication = False
         except Exception as e:
-            raise Exception("Internal error") from e
+            raise RuntimeError("Internal error") from e
         finally:
             eventually(dispatcher.master.initLock.release)
 
@@ -403,7 +394,6 @@ class BuildbotWebSocketServerProtocol(WebSocketServerProtocol):
 
 
 class Dispatcher(BaseDispatcher):
-
     DUMMY_PORT = 1
 
     def __init__(self, config_portstr, portstr):
@@ -431,7 +421,7 @@ class Dispatcher(BaseDispatcher):
             # Check that websocket port is actually stored into the port attribute, as we're
             # relying on undocumented behavior.
             if self.serverFactory.port != self.DUMMY_PORT:
-                raise Exception("Expected websocket port to be set to dummy port")
+                raise RuntimeError("Expected websocket port to be set to dummy port")
             self.serverFactory.port = port.getHost().port
         return port
 

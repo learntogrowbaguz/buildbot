@@ -16,20 +16,20 @@
 # Method to add build step taken from here
 # https://seasonofcode.com/posts/how-to-add-custom-build-steps-and-commands-to-setuppy.html
 import datetime
+import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
-from pkg_resources import parse_version
 from subprocess import PIPE
 from subprocess import STDOUT
 from subprocess import Popen
 
 import setuptools.command.build_py
 import setuptools.command.egg_info
+from setuptools import Command
 from setuptools import setup
-
-import distutils.cmd  # isort:skip
 
 old_listdir = os.listdir
 
@@ -40,6 +40,8 @@ def listdir(path):
     if "node_modules" in l:
         l.remove("node_modules")
     return l
+
+
 os.listdir = listdir
 
 
@@ -57,7 +59,9 @@ def gitDescribeToPep440(version):
     # where 20 is the number of commit since last release, and gf0f45ca is the short commit id preceded by 'g'
     # we parse this a transform into a pep440 release version 0.9.9.dev20 (increment last digit and add dev before 20)
 
-    VERSION_MATCH = re.compile(r'(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.post(?P<post>\d+))?(-(?P<dev>\d+))?(-g(?P<commit>.+))?')
+    VERSION_MATCH = re.compile(
+        r'(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(\.post(?P<post>\d+))?(-(?P<dev>\d+))?(-g(?P<commit>.+))?'
+    )
     v = VERSION_MATCH.search(version)
     if v:
         major = int(v.group('major'))
@@ -66,10 +70,10 @@ def gitDescribeToPep440(version):
         if v.group('dev'):
             patch += 1
             dev = int(v.group('dev'))
-            return "{}.{}.{}-dev{}".format(major, minor, patch, dev)
+            return f"{major}.{minor}.{patch}.dev{dev}"
         if v.group('post'):
             return "{}.{}.{}.post{}".format(major, minor, patch, v.group('post'))
-        return "{}.{}.{}".format(major, minor, patch)
+        return f"{major}.{minor}.{patch}"
 
     return v
 
@@ -80,34 +84,34 @@ def mTimeVersion(init_file):
     for root, dirs, files in os.walk(cwd):
         for f in files:
             m = max(os.path.getmtime(os.path.join(root, f)), m)
-    d = datetime.datetime.utcfromtimestamp(m)
+    d = datetime.datetime.fromtimestamp(m, datetime.timezone.utc)
     return d.strftime("%Y.%m.%d")
 
 
-def getVersionFromArchiveId(git_archive_id='$Format:%ct %d$'):
-    """ Extract the tag if a source is from git archive.
+def getVersionFromArchiveId(git_archive_id='$Format:%ct %(describe:abbrev=10)$'):
+    """Extract the tag if a source is from git archive.
 
-        When source is exported via `git archive`, the git_archive_id init value is modified
-        and placeholders are expanded to the "archived" revision:
+    When source is exported via `git archive`, the git_archive_id init value is modified
+    and placeholders are expanded to the "archived" revision:
 
-            %ct: committer date, UNIX timestamp
-            %d: ref names, like the --decorate option of git-log
+        %ct: committer date, UNIX timestamp
+        %(describe:abbrev=10): git-describe output, always abbreviating to 10 characters of commit ID.
+                               e.g. v3.10.0-850-g5bf957f89
 
-        See man gitattributes(5) and git-log(1) (PRETTY FORMATS) for more details.
+    See man gitattributes(5) and git-log(1) (PRETTY FORMATS) for more details.
     """
     # mangle the magic string to make sure it is not replaced by git archive
-    if not git_archive_id.startswith('$For''mat:'):
+    if not git_archive_id.startswith('$For' + 'mat:'):
         # source was modified by git archive, try to parse the version from
         # the value of git_archive_id
 
-        match = re.search(r'tag:\s*v([^,)]+)', git_archive_id)
-        if match:
+        tstamp, _, describe_output = git_archive_id.strip().partition(' ')
+        if describe_output:
             # archived revision is tagged, use the tag
-            return gitDescribeToPep440(match.group(1))
+            return gitDescribeToPep440(describe_output)
 
         # archived revision is not tagged, use the commit date
-        tstamp = git_archive_id.strip().split()[0]
-        d = datetime.datetime.utcfromtimestamp(int(tstamp))
+        d = datetime.datetime.fromtimestamp(int(tstamp), datetime.timezone.utc)
         return d.strftime('%Y.%m.%d')
     return None
 
@@ -115,7 +119,7 @@ def getVersionFromArchiveId(git_archive_id='$Format:%ct %d$'):
 def getVersion(init_file):
     """
     Return BUILDBOT_VERSION environment variable, content of VERSION file, git
-    tag or 'latest'
+    tag or '0.0.0' meaning we could not find the version, but the output still has to be valid
     """
 
     try:
@@ -128,7 +132,7 @@ def getVersion(init_file):
         fn = os.path.join(cwd, 'VERSION')
         with open(fn) as f:
             return f.read().strip()
-    except IOError:
+    except OSError:
         pass
 
     version = getVersionFromArchiveId()
@@ -152,7 +156,7 @@ def getVersion(init_file):
         return mTimeVersion(init_file)
     except Exception:
         # bummer. lets report something
-        return "latest"
+        return "0.0.0"
 
 
 # JS build strategy:
@@ -182,7 +186,8 @@ def getVersion(init_file):
 # This is why we override both egg_info and build, and the first run build
 # the js.
 
-class BuildJsCommand(distutils.cmd.Command):
+
+class BuildJsCommand(Command):
     """A custom command to run JS build."""
 
     description = 'run JS build'
@@ -198,9 +203,12 @@ class BuildJsCommand(distutils.cmd.Command):
         """Run command."""
         if self.already_run:
             return
-        package = self.distribution.packages[0]
-        if os.path.exists("webpack.config.js"):
 
+        if os.path.isdir('build'):
+            shutil.rmtree('build')
+
+        package = self.distribution.packages[0]
+        if os.path.exists("package.json"):
             shell = bool(os.name == 'nt')
 
             yarn_program = None
@@ -215,21 +223,25 @@ class BuildJsCommand(distutils.cmd.Command):
 
             assert yarn_program is not None, "need nodejs and yarn installed in current PATH"
 
-            yarn_bin = check_output([yarn_program, "bin"], shell=shell).strip()
-
             commands = [
                 [yarn_program, 'install', '--pure-lockfile'],
                 [yarn_program, 'run', 'build'],
             ]
 
             for command in commands:
-                self.announce('Running command: {}'.format(str(" ".join(command))),
-                              level=distutils.log.INFO)
-                subprocess.check_call(command, shell=shell)
+                logging.info('Running command: {}'.format(str(" ".join(command))))
+                try:
+                    subprocess.check_call(command, shell=shell)
+                except subprocess.CalledProcessError as e:
+                    raise Exception(
+                        f"Exception = {e} command was called in directory = {os.getcwd()}"
+                    ) from e
 
-        self.copy_tree(os.path.join(package, 'static'), os.path.join(
-            "build", "lib", package, "static"))
+        self.copy_tree(
+            os.path.join(package, 'static'), os.path.join("build", "lib", package, "static")
+        )
 
+        assert self.distribution.metadata.version is not None, "version is not set"
         with open(os.path.join("build", "lib", package, "VERSION"), "w") as f:
             f.write(self.distribution.metadata.version)
 
@@ -260,8 +272,7 @@ def setup_www_plugin(**kw):
     if 'version' not in kw:
         kw['version'] = getVersion(os.path.join(package, "__init__.py"))
 
-    setup(cmdclass=dict(
-        egg_info=EggInfoCommand,
-        build_py=BuildPyCommand,
-        build_js=BuildJsCommand),
-        **kw)
+    setup(
+        cmdclass=dict(egg_info=EggInfoCommand, build_py=BuildPyCommand, build_js=BuildJsCommand),
+        **kw,
+    )

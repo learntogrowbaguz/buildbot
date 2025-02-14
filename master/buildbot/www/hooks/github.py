@@ -21,7 +21,6 @@ import re
 from hashlib import sha1
 
 from dateutil.parser import parse as dateparse
-
 from twisted.internet import defer
 from twisted.python import log
 
@@ -40,19 +39,22 @@ DEFAULT_GITHUB_API_URL = 'https://api.github.com'
 
 
 class GitHubEventHandler(PullRequestMixin):
-
     property_basename = "github"
 
-    def __init__(self, secret, strict,
-                 codebase=None,
-                 github_property_whitelist=None,
-                 master=None,
-                 skips=None,
-                 github_api_endpoint=None,
-                 pullrequest_ref=None,
-                 token=None,
-                 debug=False,
-                 verify=False):
+    def __init__(
+        self,
+        secret,
+        strict,
+        codebase=None,
+        github_property_whitelist=None,
+        master=None,
+        skips=None,
+        github_api_endpoint=None,
+        pullrequest_ref=None,
+        token=None,
+        debug=False,
+        verify=True,
+    ):
         if github_property_whitelist is None:
             github_property_whitelist = []
         self._secret = secret
@@ -70,8 +72,7 @@ class GitHubEventHandler(PullRequestMixin):
             self.github_api_endpoint = DEFAULT_GITHUB_API_URL
 
         if self._strict and not self._secret:
-            raise ValueError('Strict mode is requested '
-                             'while no secret is provided')
+            raise ValueError('Strict mode is requested while no secret is provided')
         self.debug = debug
         self.verify = verify
 
@@ -115,9 +116,9 @@ class GitHubEventHandler(PullRequestMixin):
             p.master = self.master
             rendered_secret = yield p.render(self._secret)
 
-            mac = hmac.new(unicode2bytes(rendered_secret),
-                           msg=unicode2bytes(content),
-                           digestmod=sha1)
+            mac = hmac.new(
+                unicode2bytes(rendered_secret), msg=unicode2bytes(content), digestmod=sha1
+            )
 
             def _cmp(a, b):
                 return hmac.compare_digest(a, b)
@@ -141,6 +142,9 @@ class GitHubEventHandler(PullRequestMixin):
     def handle_ping(self, _, __):
         return [], 'git'
 
+    def handle_workflow_run(self, _, __):
+        return [], 'git'
+
     def handle_push(self, payload, event):
         # This field is unused:
         user = None
@@ -153,8 +157,7 @@ class GitHubEventHandler(PullRequestMixin):
 
         # Inject some additional white-listed event payload properties
         properties = self.extractProperties(payload)
-        changes = self._process_change(payload, user, repo, repo_url, project,
-                                       event, properties)
+        changes = self._process_change(payload, user, repo, repo_url, project, event, properties)
 
         log.msg(f"Received {len(changes)} changes from github")
 
@@ -204,8 +207,10 @@ class GitHubEventHandler(PullRequestMixin):
             'category': 'pull',
             # TODO: Get author name based on login id using txgithub module
             'author': payload['sender']['login'],
-            'comments': (f"GitHub Pull Request #{number} ({commits} "
-                        f"commit{'s' if commits != 1 else ''})\n{title}\n{comments}"),
+            'comments': (
+                f"GitHub Pull Request #{number} ({commits} "
+                f"commit{'s' if commits != 1 else ''})\n{title}\n{comments}"
+            ),
             'properties': properties,
         }
 
@@ -221,10 +226,10 @@ class GitHubEventHandler(PullRequestMixin):
 
     @defer.inlineCallbacks
     def _get_commit_msg(self, repo, sha):
-        '''
+        """
         :param repo: the repo full name, ``{owner}/{project}``.
             e.g. ``buildbot/buildbot``
-        '''
+        """
 
         headers = {
             'User-Agent': 'Buildbot',
@@ -232,13 +237,18 @@ class GitHubEventHandler(PullRequestMixin):
         if self._token:
             p = Properties()
             p.master = self.master
+            p.setProperty("full_name", repo, "change_hook")
             token = yield p.render(self._token)
             headers['Authorization'] = 'token ' + token
 
         url = f'/repos/{repo}/commits/{sha}'
-        http = yield httpclientservice.HTTPClientService.getService(
-            self.master, self.github_api_endpoint, headers=headers,
-            debug=self.debug, verify=self.verify)
+        http = yield httpclientservice.HTTPSession(
+            self.master.httpservice,
+            self.github_api_endpoint,
+            headers=headers,
+            debug=self.debug,
+            verify=self.verify,
+        )
         res = yield http.get(url)
         if 200 <= res.code < 300:
             data = yield res.json()
@@ -259,12 +269,13 @@ class GitHubEventHandler(PullRequestMixin):
         if self._token:
             p = Properties()
             p.master = self.master
+            p.setProperty("full_name", repo, "change_hook")
             token = yield p.render(self._token)
             headers["Authorization"] = "token " + token
 
         url = f"/repos/{repo}/pulls/{number}/files"
-        http = yield httpclientservice.HTTPClientService.getService(
-            self.master,
+        http = yield httpclientservice.HTTPSession(
+            self.master.httpservice,
             self.github_api_endpoint,
             headers=headers,
             debug=self.debug,
@@ -273,13 +284,20 @@ class GitHubEventHandler(PullRequestMixin):
         res = yield http.get(url)
         if 200 <= res.code < 300:
             data = yield res.json()
-            return [f["filename"] for f in data]
+            filenames = []
+            for f in data:
+                filenames.append(f["filename"])
+                # If a file was moved this tell us where it was moved from.
+                previous_filename = f.get("previous_filename")
+                if previous_filename is not None:
+                    filenames.append(previous_filename)
+
+            return filenames
 
         log.msg(f'Failed fetching PR files: response code {res.code}')
         return []
 
-    def _process_change(self, payload, user, repo, repo_url, project, event,
-                        properties):
+    def _process_change(self, payload, user, repo, repo_url, project, event, properties):
         """
         Consumes the JSON as a python object and actually starts the build.
 
@@ -336,7 +354,7 @@ class GitHubEventHandler(PullRequestMixin):
                     'github_distinct': commit.get('distinct', True),
                     'event': event,
                 },
-                'category': category
+                'category': category,
             }
             # Update with any white-listed github event properties
             change['properties'].update(properties)
@@ -351,15 +369,16 @@ class GitHubEventHandler(PullRequestMixin):
         return changes
 
     def _has_skip(self, msg):
-        '''
+        """
         The message contains the skipping keyword or not.
 
         :return type: Bool
-        '''
+        """
         for skip in self.skips:
             if re.search(skip, msg):
                 return True
         return False
+
 
 # for GitHub, we do another level of indirection because
 # we already had documented API that encouraged people to subclass GitHubEventHandler
@@ -378,16 +397,14 @@ class GitHubHandler(BaseHookHandler):
             'codebase': options.get('codebase', None),
             'github_property_whitelist': options.get('github_property_whitelist', None),
             'skips': options.get('skips', None),
-            'github_api_endpoint':
-                options.get('github_api_endpoint', None) or 'https://api.github.com',
+            'github_api_endpoint': options.get('github_api_endpoint', None)
+            or 'https://api.github.com',
             'pullrequest_ref': options.get('pullrequest_ref', None) or 'merge',
             'token': options.get('token', None),
             'debug': options.get('debug', None) or False,
-            'verify': options.get('verify', None) or False,
+            'verify': options.get('verify', None) or True,
         }
-        handler = klass(options.get('secret', None),
-                        options.get('strict', False),
-                        **klass_kwargs)
+        handler = klass(options.get('secret', None), options.get('strict', False), **klass_kwargs)
         self.handler = handler
 
     def getChanges(self, request):

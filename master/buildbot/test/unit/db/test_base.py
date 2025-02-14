@@ -13,29 +13,32 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING
+from unittest import mock
 
 import sqlalchemy as sa
-
-import mock
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
 from buildbot.db import base
 from buildbot.test import fakedb
-from buildbot.test.util import connector_component
+from buildbot.test.fake import fakemaster
+from buildbot.test.reactor import TestReactorMixin
 from buildbot.util import sautils
+
+if TYPE_CHECKING:
+    from sqlalchemy.future.engine import Connection
 
 
 class TestBase(unittest.TestCase):
-
     def setUp(self):
         meta = sa.MetaData()
-        self.tbl = sautils.Table('tbl', meta,
-                                 sa.Column('str32', sa.String(length=32)),
-                                 sa.Column('txt', sa.Text))
+        self.tbl = sautils.Table(
+            'tbl', meta, sa.Column('str32', sa.String(length=32)), sa.Column('txt', sa.Text)
+        )
         self.db = mock.Mock()
         self.db.pool.engine.dialect.name = 'mysql'
         self.comp = base.DBConnectorComponent(self.db)
@@ -66,67 +69,49 @@ class TestBase(unittest.TestCase):
         # run that again since the method gets stubbed out
         self.comp.checkLength(self.tbl.c.str32, "long string" * 5)
 
-    def _sha1(self, s):
-        return hashlib.sha1(s).hexdigest()
 
-    def test_hashColumns_single(self):
-        self.assertEqual(self.comp.hashColumns('master'),
-                         self._sha1(b'master'))
-
-    def test_hashColumns_multiple(self):
-        self.assertEqual(self.comp.hashColumns('a', None, 'b', 1),
-                         self._sha1(b'a\0\xf5\x00b\x001'))
-
-    def test_hashColumns_None(self):
-        self.assertEqual(self.comp.hashColumns(None),
-                         self._sha1(b'\xf5'))
-
-    def test_hashColumns_integer(self):
-        self.assertEqual(self.comp.hashColumns(11),
-                         self._sha1(b'11'))
-
-    def test_hashColumns_unicode_ascii_match(self):
-        self.assertEqual(self.comp.hashColumns('master'),
-                         self.comp.hashColumns('master'))
-
-
-class TestBaseAsConnectorComponent(unittest.TestCase,
-                                   connector_component.ConnectorComponentMixin):
-
+class TestBaseAsConnectorComponent(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def setUp(self):
-        # this co-opts the masters table to test findSomethingId
-        yield self.setUpConnectorComponent(
-            table_names=['masters'])
-
-        self.db.base = base.DBConnectorComponent(self.db)
+        self.setup_test_reactor()
+        self.master = yield fakemaster.make_master(self, wantDb=True)
+        self.db = self.master.db
 
     @defer.inlineCallbacks
     def test_findSomethingId_race(self):
         tbl = self.db.model.masters
         hash = hashlib.sha1(b'somemaster').hexdigest()
 
-        def race_thd(conn):
-            conn.execute(tbl.insert(),
-                         id=5, name='somemaster', name_hash=hash,
-                         active=1, last_active=1)
-        id = yield self.db.base.findSomethingId(
+        def race_thd(conn: Connection):
+            conn.execute(
+                tbl.insert().values(
+                    id=5, name='somemaster', name_hash=hash, active=1, last_active=1
+                )
+            )
+            conn.commit()
+
+        id = yield self.db.masters.findSomethingId(
             tbl=self.db.model.masters,
             whereclause=(tbl.c.name_hash == hash),
-            insert_values=dict(name='somemaster', name_hash=hash,
-                               active=1, last_active=1),
-            _race_hook=race_thd)
+            insert_values={
+                "name": "somemaster",
+                "name_hash": hash,
+                "active": 1,
+                "last_active": 1,
+            },
+            _race_hook=race_thd,
+        )
         self.assertEqual(id, 5)
 
     @defer.inlineCallbacks
     def test_findSomethingId_new(self):
         tbl = self.db.model.masters
         hash = hashlib.sha1(b'somemaster').hexdigest()
-        id = yield self.db.base.findSomethingId(
+        id = yield self.db.masters.findSomethingId(
             tbl=self.db.model.masters,
             whereclause=(tbl.c.name_hash == hash),
-            insert_values=dict(name='somemaster', name_hash=hash,
-                               active=1, last_active=1))
+            insert_values={"name": 'somemaster', "name_hash": hash, "active": 1, "last_active": 1},
+        )
         self.assertEqual(id, 1)
 
     @defer.inlineCallbacks
@@ -134,31 +119,31 @@ class TestBaseAsConnectorComponent(unittest.TestCase,
         tbl = self.db.model.masters
         hash = hashlib.sha1(b'somemaster').hexdigest()
 
-        yield self.insertTestData([
+        yield self.db.insert_test_data([
             fakedb.Master(id=7, name='somemaster', name_hash=hash),
         ])
 
-        id = yield self.db.base.findSomethingId(
+        id = yield self.db.masters.findSomethingId(
             tbl=self.db.model.masters,
             whereclause=(tbl.c.name_hash == hash),
-            insert_values=dict(name='somemaster', name_hash=hash,
-                               active=1, last_active=1))
+            insert_values={"name": 'somemaster', "name_hash": hash, "active": 1, "last_active": 1},
+        )
         self.assertEqual(id, 7)
 
     @defer.inlineCallbacks
     def test_findSomethingId_new_noCreate(self):
         tbl = self.db.model.masters
         hash = hashlib.sha1(b'somemaster').hexdigest()
-        id = yield self.db.base.findSomethingId(
+        id = yield self.db.masters.findSomethingId(
             tbl=self.db.model.masters,
             whereclause=(tbl.c.name_hash == hash),
-            insert_values=dict(name='somemaster', name_hash=hash,
-                               active=1, last_active=1), autoCreate=False)
+            insert_values={"name": 'somemaster', "name_hash": hash, "active": 1, "last_active": 1},
+            autoCreate=False,
+        )
         self.assertEqual(id, None)
 
 
 class TestCachedDecorator(unittest.TestCase):
-
     def setUp(self):
         # set this to True to check that cache.get isn't called (for
         # no_cache=1)
@@ -178,8 +163,10 @@ class TestCachedDecorator(unittest.TestCase):
         self.assertEqual(cache_name, "mycache")
         cache = mock.Mock(name="mycache")
         if self.cache_get_raises_exception:
+
             def ex(key):
                 raise RuntimeError("cache.get called unexpectedly")
+
             cache.get = ex
         else:
             cache.get = miss_fn
@@ -201,8 +188,7 @@ class TestCachedDecorator(unittest.TestCase):
 
         res2 = yield comp.getThing("bar")
 
-        self.assertEqual((res1, res2, comp.invocations),
-                         ('foofoo', 'barbar', ['foo', 'bar']))
+        self.assertEqual((res1, res2, comp.invocations), ('foofoo', 'barbar', ['foo', 'bar']))
 
     @defer.inlineCallbacks
     def test_cached_no_cache(self):

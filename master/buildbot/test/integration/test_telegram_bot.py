@@ -14,8 +14,7 @@
 # Copyright Buildbot Team Members
 
 import json
-
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.internet import reactor
@@ -31,7 +30,7 @@ from buildbot.reporters import telegram
 from buildbot.test import fakedb
 from buildbot.test.fake import fakemaster
 from buildbot.test.fake import httpclientservice as fakehttpclientservice
-from buildbot.test.util import db
+from buildbot.test.util import dirs
 from buildbot.test.util import www
 from buildbot.util import bytes2unicode
 from buildbot.util import unicode2bytes
@@ -41,10 +40,13 @@ from buildbot.www import service as wwwservice
 
 
 @implementer(IBodyProducer)
-class BytesProducer():
+class BytesProducer:
     def __init__(self, body):
         self.body = body
         self.length = len(body)
+
+    def resumeProducing(self) -> None:
+        raise NotImplementedError()
 
     def startProducing(self, consumer):
         consumer.write(self.body)
@@ -57,56 +59,62 @@ class BytesProducer():
         pass
 
 
-class TelegramBot(db.RealDatabaseWithConnectorMixin, www.RequiresWwwMixin, unittest.TestCase):
-
+class TelegramBot(www.RequiresWwwMixin, dirs.DirsMixin, unittest.TestCase):
     master = None
 
+    _commands = [
+        {'command': command, 'description': doc}
+        for command, doc in telegram.TelegramContact.get_commands()
+    ]
+
     @defer.inlineCallbacks
-    def get_http(self, bot_token):
-        base_url = "https://api.telegram.org/telegram" + bot_token
-        http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.master, self, base_url)
-        # This is necessary as Telegram will make requests in the reconfig
-        http.expect("post", "/getMe",
-                    content_json={'ok': 1, 'result': {'username': 'testbot'}})
+    def setup_http_service(self, bot_token):
+        base_url = "https://api.telegram.org/bot" + bot_token
+        self.http = yield fakehttpclientservice.HTTPClientService.getService(
+            self.master, self, base_url
+        )
+
+    def expect_telegram_requests(self, bot_token):
+        self.http.expect(
+            "post", "/getMe", content_json={'ok': 1, 'result': {'username': 'testbot'}}
+        )
+        self.http.expect(
+            "post", "/setMyCommands", json={'commands': self._commands}, content_json={'ok': 1}
+        )
         if bot_token == 'poll':
-            http.expect("post", "/deleteWebhook",
-                        content_json={'ok': 1})
+            self.http.expect("post", "/deleteWebhook", content_json={'ok': 1})
         else:
-            http.expect("post", "/setWebhook",
-                        json={'url': bytes2unicode(self.bot_url)},
-                        content_json={'ok': 1})
-        return http
+            self.http.expect(
+                "post",
+                "/setWebhook",
+                json={'url': bytes2unicode(self.bot_url)},
+                content_json={'ok': 1},
+            )
 
     @defer.inlineCallbacks
     def setUp(self):
-        table_names = [
-            'objects', 'object_state', 'masters',
-            'workers', 'configured_workers', 'connected_workers',
-            'builder_masters', 'builders'
-        ]
-
-        master = fakemaster.make_master(self, wantRealReactor=True)
-
-        yield self.setUpRealDatabaseWithConnector(master, table_names=table_names,
-                                                  sqlite_memory=False)
+        self.setUpDirs('basedir')
+        master = yield fakemaster.make_master(
+            self, wantDb=True, sqlite_memory=False, wantRealReactor=True, auto_shutdown=False
+        )
 
         master.data = dataconnector.DataConnector()
         yield master.data.setServiceParent(master)
 
-        master.config.mq = dict(type='simple')
+        master.config.mq = {"type": 'simple'}
         master.mq = mqconnector.MQConnector()
         yield master.mq.setServiceParent(master)
         yield master.mq.setup()
         yield master.mq.startService()
 
-        master.config.www = dict(
-            port='tcp:0:interface=127.0.0.1',
-            debug=True,
-            auth=auth.NoAuth(),
-            authz=authz.Authz(),
-            avatar_methods=[],
-            logfileName='http.log')
+        master.config.www = {
+            "port": 'tcp:0:interface=127.0.0.1',
+            "debug": True,
+            "auth": auth.NoAuth(),
+            "authz": authz.Authz(),
+            "avatar_methods": [],
+            "logfileName": 'http.log',
+        }
         master.www = wwwservice.WWWService()
         yield master.www.setServiceParent(master)
         yield master.www.startService()
@@ -127,14 +135,15 @@ class TelegramBot(db.RealDatabaseWithConnectorMixin, www.RequiresWwwMixin, unitt
 
         self.agent = client.Agent(reactor)
 
+        self.bot_url = self.url + b"telegram12345:secret"
+        yield self.setup_http_service('12345:secret')
+        self.expect_telegram_requests('12345:secret')
+
         # create a telegram bot service
         tb = master.config.services['TelegramBot'] = telegram.TelegramBot(
-            bot_token='12345:secret', useWebhook=True,
-            chat_ids=[-123456], notify_events=['worker']
+            bot_token='12345:secret', useWebhook=True, chat_ids=[-123456], notify_events=['worker']
         )
-        tb._get_http = self.get_http
         yield tb.setServiceParent(self.master)
-        self.bot_url = self.url + b"telegram12345:secret"
 
         yield tb.startService()
 
@@ -142,73 +151,86 @@ class TelegramBot(db.RealDatabaseWithConnectorMixin, www.RequiresWwwMixin, unitt
 
         def send_message(chat, message, **kwargs):
             self.sent_messages.append((chat, message))
+
         tb.bot.send_message = send_message
 
-    @defer.inlineCallbacks
-    def tearDown(self):
-        if self.master:
-            yield self.master.www.stopService()
-            yield self.master.mq.stopService()
-        yield self.tearDownRealDatabaseWithConnector()
+        @defer.inlineCallbacks
+        def cleanup():
+            if self.master:
+                yield self.master.www.stopService()
+                yield self.master.mq.stopService()
+                yield self.master.test_shutdown()
+
+        self.addCleanup(cleanup)
 
     @defer.inlineCallbacks
     def testWebhook(self):
-        payload = unicode2bytes(json.dumps({
-            "update_id": 12345,
-            "message": {
-                "message_id": 123,
-                "from": {
-                    "id": 123456789,
-                    "first_name": "Alice",
+        payload = unicode2bytes(
+            json.dumps({
+                "update_id": 12345,
+                "message": {
+                    "message_id": 123,
+                    "from": {
+                        "id": 123456789,
+                        "first_name": "Alice",
+                    },
+                    "chat": {"id": -12345678, "title": "Wonderlands", "type": "group"},
+                    "date": 1566688888,
+                    "text": "/getid",
                 },
-                "chat": {
-                    "id": -12345678,
-                    "title": "Wonderlands",
-                    "type": "group"
-                },
-                "date": 1566688888,
-                "text": "/getid",
-            }
-        }))
+            })
+        )
 
-        pg = yield self.agent.request(b'POST', self.bot_url,
-                                      Headers({'Content-Type': ['application/json']}),
-                                      BytesProducer(payload))
-        self.assertEqual(pg.code, 202,
-                         f"did not get 202 response for '{bytes2unicode(self.bot_url)}'")
+        pg = yield self.agent.request(
+            b'POST',
+            self.bot_url,
+            Headers({'Content-Type': ['application/json']}),
+            BytesProducer(payload),
+        )
+        self.assertEqual(
+            pg.code, 202, f"did not get 202 response for '{bytes2unicode(self.bot_url)}'"
+        )
         self.assertIn('123456789', self.sent_messages[0][1])
         self.assertIn('-12345678', self.sent_messages[1][1])
 
     @defer.inlineCallbacks
     def testReconfig(self):
+        # initial config and reconfig will issue requests twice
+        self.expect_telegram_requests('12345:secret')
+
         tb = self.master.config.services['TelegramBot']
         yield tb.reconfigService(
-            bot_token='12345:secret', useWebhook=True,
-            chat_ids=[-123456], notify_events=['problem']
+            bot_token='12345:secret', useWebhook=True, chat_ids=[-123456], notify_events=['problem']
         )
 
     @defer.inlineCallbacks
     def testLoadState(self):
         tboid = yield self.master.db.state.getObjectId(
-            'testbot', 'buildbot.reporters.telegram.TelegramWebhookBot')
-        yield self.insertTestData([
-            fakedb.ObjectState(objectid=tboid, name='notify_events',
-                               value_json='[[123456789, ["started", "finished"]]]'),
-            fakedb.ObjectState(objectid=tboid, name='missing_workers',
-                               value_json='[[123456789, [12]]]'),
+            'testbot', 'buildbot.reporters.telegram.TelegramWebhookBot'
+        )
+        yield self.master.db.insert_test_data([
+            fakedb.ObjectState(
+                objectid=tboid,
+                name='notify_events',
+                value_json='[[123456789, ["started", "finished"]]]',
+            ),
+            fakedb.ObjectState(
+                objectid=tboid, name='missing_workers', value_json='[[123456789, [12]]]'
+            ),
         ])
 
         tb = self.master.config.services['TelegramBot']
         yield tb.bot.loadState()
         c = tb.bot.getContact({'id': 123456789}, {'id': 123456789})
-        self.assertEquals(c.channel.notify_events, {'started', 'finished'})
-        self.assertEquals(c.channel.missing_workers, {12})
+        self.assertEqual(c.channel.notify_events, {'started', 'finished'})
+        self.assertEqual(c.channel.missing_workers, {12})
 
     @defer.inlineCallbacks
     def testSaveState(self):
         tb = self.master.config.services['TelegramBot']
         tboid = yield self.master.db.state.getObjectId(
-            'testbot', 'buildbot.reporters.telegram.TelegramWebhookBot')
+            'testbot', 'buildbot.reporters.telegram.TelegramWebhookBot'
+        )
 
         notify_events = yield self.master.db.state.getState(tboid, 'notify_events', ())
         missing_workers = yield self.master.db.state.getState(tboid, 'missing_workers', ())
@@ -233,11 +255,11 @@ class TelegramBot(db.RealDatabaseWithConnectorMixin, www.RequiresWwwMixin, unitt
 
     @defer.inlineCallbacks
     def testMissingWorker(self):
-        yield self.insertTestData([fakedb.Worker(id=1, name='local1')])
+        yield self.master.db.insert_test_data([fakedb.Worker(id=1, name='local1')])
 
         tb = self.master.config.services['TelegramBot']
         channel = tb.bot.getChannel(-123456)
-        self.assertEquals(channel.notify_events, {'worker'})
+        self.assertEqual(channel.notify_events, {'worker'})
 
         yield self.master.data.updates.workerMissing(
             workerid=1,
@@ -245,13 +267,14 @@ class TelegramBot(db.RealDatabaseWithConnectorMixin, www.RequiresWwwMixin, unitt
             last_connection='long time ago',
             notify=['admin@worker.org'],
         )
-        self.assertEquals(self.sent_messages[0][1],
-                          "Worker `local1` is missing. It was seen last on long time ago.")
+        self.assertEqual(
+            self.sent_messages[0][1],
+            "Worker `local1` is missing. It was seen last on long time ago.",
+        )
 
         yield self.master.data.updates.workerConnected(
             workerid=1,
             masterid=self.master.masterid,
             workerinfo={},
         )
-        self.assertEquals(self.sent_messages[1][1],
-                          "Worker `local1` is back online.")
+        self.assertEqual(self.sent_messages[1][1], "Worker `local1` is back online.")

@@ -163,28 +163,16 @@ Linter checks
 ~~~~~~~~~~~~~
 
 Tests in this category run simple syntax and style checks on the Python code.
-These tests are represented by **bb/pylint/** and **bb/flake8/** test names in the Buildbot CI.
+These tests are represented by **bb/pylint/** and **bb/ruff/** test names in the Buildbot CI.
 To run locally, execute the following:
 
 .. code-block:: bash
 
     pip install -r requirements-ci.txt
     make pylint
-    make flake8
+    make ruff
 
 If you see spell check errors, but your words are perfectly correct, then you may need to add these words to a whitelist at `common/code_spelling_ignore_words.txt`.
-
-isort
-~~~~~
-
-Tests in this category sort the imports in the Python code.
-These tests are represented by **bb/isort/** test names in the Buildbot CI.
-To run locally, execute the following:
-
-.. code-block:: bash
-
-    pip install -r requirements-ci.txt
-    isort
 
 Documentation
 ~~~~~~~~~~~~~
@@ -205,7 +193,7 @@ End-to-end tests
 ~~~~~~~~~~~~~~~~
 
 Tests in this category run the end-to-end tests by launching a full Buildbot instance, clicking on buttons on the web UI and testing the results.
-It is represented by **bb/smokes/** test names in the Buildbot CI.
+It is represented by **bb/e2e**/** test names in the Buildbot CI.
 The tests are sometimes unstable: if you didn't change the front end code and see a failure then it's most likely an instability.
 To run locally, install a Chrome-compatible browser and execute the following:
 
@@ -213,4 +201,4 @@ To run locally, install a Chrome-compatible browser and execute the following:
 
     pip install -r requirements-ci.txt
     make tarballs
-    ./common/smokedist.sh whl
+    ./common/smokedist-react.sh whl

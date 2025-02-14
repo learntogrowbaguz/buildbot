@@ -14,7 +14,7 @@
 # Copyright Buildbot Team Members
 
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
@@ -23,23 +23,20 @@ from buildbot.changes import base
 from buildbot.changes import manager
 from buildbot.test.fake import fakemaster
 from buildbot.test.reactor import TestReactorMixin
-from buildbot.test.util.warnings import assertProducesWarnings
-from buildbot.warnings import DeprecatedApiWarning
 
 
-class TestChangeManager(unittest.TestCase, TestReactorMixin):
-
+class TestChangeManager(TestReactorMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantData=True)
         self.cm = manager.ChangeManager()
+
         self.master.startService()
+        self.addCleanup(self.master.stopService)
+
         yield self.cm.setServiceParent(self.master)
         self.new_config = mock.Mock()
-
-    def tearDown(self):
-        return self.master.stopService()
 
     def make_sources(self, n, klass=base.ChangeSource, **kwargs):
         for i in range(n):
@@ -59,7 +56,7 @@ class TestChangeManager(unittest.TestCase, TestReactorMixin):
 
     @defer.inlineCallbacks
     def test_reconfigService_remove(self):
-        src1, = self.make_sources(1)
+        (src1,) = self.make_sources(1)
         yield src1.setServiceParent(self.cm)
         self.new_config.change_sources = []
 
@@ -70,10 +67,10 @@ class TestChangeManager(unittest.TestCase, TestReactorMixin):
 
     @defer.inlineCallbacks
     def test_reconfigService_change_reconfigurable(self):
-        src1, = self.make_sources(1, base.ReconfigurablePollingChangeSource, pollInterval=1)
+        (src1,) = self.make_sources(1, base.ReconfigurablePollingChangeSource, pollInterval=1)
         yield src1.setServiceParent(self.cm)
 
-        src2, = self.make_sources(1, base.ReconfigurablePollingChangeSource, pollInterval=2)
+        (src2,) = self.make_sources(1, base.ReconfigurablePollingChangeSource, pollInterval=2)
 
         self.new_config.change_sources = [src2]
 
@@ -84,24 +81,3 @@ class TestChangeManager(unittest.TestCase, TestReactorMixin):
         self.assertTrue(src1.running)
         self.assertFalse(src2.running)
         self.assertEqual(src1.pollInterval, 2)
-
-    @defer.inlineCallbacks
-    def test_reconfigService_change_legacy(self):
-        with assertProducesWarnings(DeprecatedApiWarning,
-                                    message_pattern="use ReconfigurablePollingChangeSource"):
-            src1, = self.make_sources(1, base.PollingChangeSource, pollInterval=1)
-        yield src1.setServiceParent(self.cm)
-
-        with assertProducesWarnings(DeprecatedApiWarning,
-                                    message_pattern="use ReconfigurablePollingChangeSource"):
-            src2, = self.make_sources(1, base.PollingChangeSource, pollInterval=2)
-
-        self.new_config.change_sources = [src2]
-
-        self.assertTrue(src1.running)
-        self.assertEqual(src1.pollInterval, 1)
-        yield self.cm.reconfigServiceWithBuildbotConfig(self.new_config)
-
-        self.assertFalse(src1.running)
-        self.assertTrue(src2.running)
-        self.assertEqual(src2.pollInterval, 2)

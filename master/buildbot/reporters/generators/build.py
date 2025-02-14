@@ -13,6 +13,9 @@
 #
 # Copyright Buildbot Team Members
 
+from typing import ClassVar
+from typing import Sequence
+
 from twisted.internet import defer
 from zope.interface import implementer
 
@@ -20,30 +23,31 @@ from buildbot import interfaces
 from buildbot.reporters import utils
 from buildbot.reporters.message import MessageFormatter
 from buildbot.reporters.message import MessageFormatterRenderable
-from buildbot.warnings import warn_deprecated
 
 from .utils import BuildStatusGeneratorMixin
 
 
 @implementer(interfaces.IReportGenerator)
 class BuildStatusGenerator(BuildStatusGeneratorMixin):
-
     wanted_event_keys = [
         ('builds', None, 'finished'),
     ]
 
-    compare_attrs = ['formatter']
+    compare_attrs: ClassVar[Sequence[str]] = ['formatter']
 
-    def __init__(self, mode=("failing", "passing", "warnings"),
-                 tags=None, builders=None, schedulers=None, branches=None,
-                 subject=None, add_logs=False, add_patch=False, report_new=False,
-                 message_formatter=None):
-        if subject is not None:
-            warn_deprecated('3.5.0', 'BuildStatusGenerator subject parameter has been ' +
-                            'deprecated: please configure subject in the message formatter')
-        else:
-            subject = "Buildbot %(result)s in %(title)s on %(builder)s"
-
+    def __init__(
+        self,
+        mode=("failing", "passing", "warnings"),
+        tags=None,
+        builders=None,
+        schedulers=None,
+        branches=None,
+        add_logs=None,
+        add_patch=False,
+        report_new=False,
+        message_formatter=None,
+    ):
+        subject = "Buildbot %(result)s in %(title)s on %(builder)s"
         super().__init__(mode, tags, builders, schedulers, branches, subject, add_logs, add_patch)
         self.formatter = message_formatter
         if self.formatter is None:
@@ -61,12 +65,16 @@ class BuildStatusGenerator(BuildStatusGeneratorMixin):
         is_new = event == 'new'
         want_previous_build = False if is_new else self._want_previous_build()
 
-        yield utils.getDetailsForBuild(master, build,
-                                       want_properties=self.formatter.want_properties,
-                                       want_steps=self.formatter.want_steps,
-                                       want_previous_build=want_previous_build,
-                                       want_logs=self.formatter.want_logs,
-                                       want_logs_content=self.formatter.want_logs_content)
+        yield utils.getDetailsForBuild(
+            master,
+            build,
+            want_properties=self.formatter.want_properties,
+            want_steps=self.formatter.want_steps,
+            want_previous_build=want_previous_build,
+            want_logs=self.formatter.want_logs,
+            add_logs=self.add_logs,
+            want_logs_content=self.formatter.want_logs_content,
+        )
 
         if not self.is_message_needed_by_props(build):
             return None
@@ -82,17 +90,24 @@ class BuildStatusGenerator(BuildStatusGeneratorMixin):
 
 @implementer(interfaces.IReportGenerator)
 class BuildStartEndStatusGenerator(BuildStatusGeneratorMixin):
-
     wanted_event_keys = [
         ('builds', None, 'new'),
         ('builds', None, 'finished'),
     ]
 
-    compare_attrs = ['start_formatter', 'end_formatter']
+    compare_attrs: ClassVar[Sequence[str]] = ['start_formatter', 'end_formatter']
 
-    def __init__(self, tags=None, builders=None, schedulers=None, branches=None, add_logs=False,
-                 add_patch=False, start_formatter=None, end_formatter=None):
-
+    def __init__(
+        self,
+        tags=None,
+        builders=None,
+        schedulers=None,
+        branches=None,
+        add_logs=None,
+        add_patch=False,
+        start_formatter=None,
+        end_formatter=None,
+    ):
         super().__init__('all', tags, builders, schedulers, branches, None, add_logs, add_patch)
         self.start_formatter = start_formatter
         if self.start_formatter is None:
@@ -108,11 +123,15 @@ class BuildStartEndStatusGenerator(BuildStatusGeneratorMixin):
 
         formatter = self.start_formatter if is_new else self.end_formatter
 
-        yield utils.getDetailsForBuild(master, build,
-                                       want_properties=formatter.want_properties,
-                                       want_steps=formatter.want_steps,
-                                       want_logs=formatter.want_logs,
-                                       want_logs_content=formatter.want_logs_content)
+        yield utils.getDetailsForBuild(
+            master,
+            build,
+            want_properties=formatter.want_properties,
+            want_steps=formatter.want_steps,
+            want_logs=formatter.want_logs,
+            add_logs=self.add_logs,
+            want_logs_content=formatter.want_logs_content,
+        )
 
         if not self.is_message_needed_by_props(build):
             return None

@@ -16,6 +16,7 @@
 import gc
 import sys
 
+from twisted.internet import defer
 from twisted.internet import task
 from twisted.trial import unittest
 
@@ -25,23 +26,25 @@ from buildbot.test.reactor import TestReactorMixin
 
 
 class TestMetricBase(TestReactorMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.observer = metrics.MetricLogObserver()
-        self.observer.parent = self.master = fakemaster.make_master(self)
-        self.master.config.metrics = dict(log_interval=0, periodic_interval=0)
+        self.observer.parent = self.master = yield fakemaster.make_master(self)
+        self.master.config.metrics = {"log_interval": 0, "periodic_interval": 0}
         self.observer._reactor = self.reactor
         self.observer.startService()
         self.observer.reconfigServiceWithBuildbotConfig(self.master.config)
 
-    def tearDown(self):
-        if self.observer.running:
-            self.observer.stopService()
+        @defer.inlineCallbacks
+        def cleanup():
+            if self.observer.running:
+                yield self.observer.stopService()
+
+        self.addCleanup(cleanup)
 
 
 class TestMetricCountEvent(TestMetricBase):
-
     def testIncrement(self):
         metrics.MetricCountEvent.log('num_widgets', 1)
         report = self.observer.asDict()
@@ -77,7 +80,6 @@ class TestMetricCountEvent(TestMetricBase):
 
 
 class TestMetricTimeEvent(TestMetricBase):
-
     def testManualEvent(self):
         metrics.MetricTimeEvent.log('foo_time', 0.001)
         report = self.observer.asDict()
@@ -122,6 +124,7 @@ class TestMetricTimeEvent(TestMetricBase):
         def foo():
             clock.advance(5)
             return "foo!"
+
         foo()
         report = self.observer.asDict()
         self.assertEqual(report['timers']['foo_time'], 5)
@@ -131,12 +134,10 @@ class TestMetricTimeEvent(TestMetricBase):
         for i in data:
             metrics.MetricTimeEvent.log('foo_time', i)
         report = self.observer.asDict()
-        self.assertEqual(
-            report['timers']['foo_time'], sum(data) / float(len(data)))
+        self.assertEqual(report['timers']['foo_time'], sum(data) / float(len(data)))
 
 
 class TestPeriodicChecks(TestMetricBase):
-
     def testPeriodicCheck(self):
         # fake out that there's no garbage (since we can't rely on Python
         # not having any garbage while running tests)
@@ -168,12 +169,12 @@ class TestPeriodicChecks(TestMetricBase):
 
     def testGetRSS(self):
         self.assertTrue(metrics._get_rss() > 0)
+
     if sys.platform != 'linux':
         testGetRSS.skip = "only available on linux platforms"
 
 
 class TestReconfig(TestMetricBase):
-
     def testReconfig(self):
         observer = self.observer
         new_config = self.master.config
@@ -183,13 +184,13 @@ class TestReconfig(TestMetricBase):
         self.assertEqual(observer.periodic_task, None)
 
         # enable log_interval
-        new_config.metrics = dict(log_interval=10, periodic_interval=0)
+        new_config.metrics = {"log_interval": 10, "periodic_interval": 0}
         observer.reconfigServiceWithBuildbotConfig(new_config)
         self.assertTrue(observer.log_task)
         self.assertEqual(observer.periodic_task, None)
 
         # disable that and enable periodic_interval
-        new_config.metrics = dict(periodic_interval=10, log_interval=0)
+        new_config.metrics = {"periodic_interval": 10, "log_interval": 0}
         observer.reconfigServiceWithBuildbotConfig(new_config)
         self.assertTrue(observer.periodic_task)
         self.assertEqual(observer.log_task, None)
@@ -205,13 +206,13 @@ class TestReconfig(TestMetricBase):
         self.assertEqual(observer.periodic_task, None)
 
         # disable both
-        new_config.metrics = dict(periodic_interval=0, log_interval=0)
+        new_config.metrics = {"periodic_interval": 0, "log_interval": 0}
         observer.reconfigServiceWithBuildbotConfig(new_config)
         self.assertEqual(observer.log_task, None)
         self.assertEqual(observer.periodic_task, None)
 
         # enable both
-        new_config.metrics = dict(periodic_interval=10, log_interval=10)
+        new_config.metrics = {"periodic_interval": 10, "log_interval": 10}
         observer.reconfigServiceWithBuildbotConfig(new_config)
         self.assertTrue(observer.log_task)
         self.assertTrue(observer.periodic_task)
@@ -220,7 +221,6 @@ class TestReconfig(TestMetricBase):
 
 
 class _LogObserver:
-
     def __init__(self):
         self.events = []
 
@@ -229,7 +229,6 @@ class _LogObserver:
 
 
 class TestReports(unittest.TestCase):
-
     def testMetricCountReport(self):
         handler = metrics.MetricCountHandler(None)
         handler.handle({}, metrics.MetricCountEvent('num_foo', 1))
@@ -246,9 +245,9 @@ class TestReports(unittest.TestCase):
 
     def testMetricAlarmReport(self):
         handler = metrics.MetricAlarmHandler(None)
-        handler.handle({}, metrics.MetricAlarmEvent(
-            'alarm_foo', msg='Uh oh', level=metrics.ALARM_WARN))
+        handler.handle(
+            {}, metrics.MetricAlarmEvent('alarm_foo', msg='Uh oh', level=metrics.ALARM_WARN)
+        )
 
         self.assertEqual("WARN alarm_foo: Uh oh", handler.report())
-        self.assertEqual(
-            {"alarms": {"alarm_foo": ("WARN", "Uh oh")}}, handler.asDict())
+        self.assertEqual({"alarms": {"alarm_foo": ("WARN", "Uh oh")}}, handler.asDict())

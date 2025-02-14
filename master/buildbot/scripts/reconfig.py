@@ -29,7 +29,6 @@ from buildbot.util import rewrap
 
 
 class Reconfigurator:
-
     @defer.inlineCallbacks
     def run(self, basedir, quiet, timeout=None):
         # Returns "Microsoft" for Vista and "Windows" for other versions
@@ -37,7 +36,7 @@ class Reconfigurator:
             print("Reconfig (through SIGHUP) is not supported on Windows.")
             return None
 
-        with open(os.path.join(basedir, "twistd.pid"), "rt", encoding='utf-8') as f:
+        with open(os.path.join(basedir, "twistd.pid"), encoding='utf-8') as f:
             self.pid = int(f.read().strip())
         if quiet:
             os.kill(self.pid, signal.SIGHUP)
@@ -60,11 +59,13 @@ class Reconfigurator:
         except BuildmasterTimeoutError:
             print("Never saw reconfiguration finish.")
         except ReconfigError:
-            print(rewrap("""\
+            print(
+                rewrap("""\
                 Reconfiguration failed. Please inspect the master.cfg file for
                 errors, correct them, then try 'buildbot reconfig' again.
-                """))
-        except IOError:
+                """)
+            )
+        except OSError:
             # we were probably unable to open the file in the first place
             self.sighup()
         except Exception as e:

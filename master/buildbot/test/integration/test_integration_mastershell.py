@@ -30,20 +30,16 @@ from buildbot.util import asyncSleep
 # with one builders and a shellcommand step
 # meant to be a template for integration steps
 class ShellMaster(RunMasterBase):
-
-    def config_for_master_command(self, **kwargs):
+    @defer.inlineCallbacks
+    def setup_config_for_master_command(self, **kwargs):
         c = {}
 
-        c['schedulers'] = [
-            schedulers.AnyBranchScheduler(name="sched", builderNames=["testy"])
-        ]
+        c['schedulers'] = [schedulers.AnyBranchScheduler(name="sched", builderNames=["testy"])]
 
         f = BuildFactory()
         f.addStep(steps.MasterShellCommand(**kwargs))
-        c['builders'] = [
-            BuilderConfig(name="testy", workernames=["local1"], factory=f)
-        ]
-        return c
+        c['builders'] = [BuilderConfig(name="testy", workernames=["local1"], factory=f)]
+        yield self.setup_master(c)
 
     def get_change(self):
         return {
@@ -53,12 +49,12 @@ class ShellMaster(RunMasterBase):
             "committer": "me@foo.com",
             "comments": "good stuff",
             "revision": "HEAD",
-            "project": "none"
+            "project": "none",
         }
 
     @defer.inlineCallbacks
     def test_shell(self):
-        yield self.setupConfig(self.config_for_master_command(command='echo hello'))
+        yield self.setup_config_for_master_command(command='echo hello')
 
         build = yield self.doForceBuild(wantSteps=True, useChange=self.get_change(), wantLogs=True)
         self.assertEqual(build['buildid'], 1)
@@ -66,9 +62,7 @@ class ShellMaster(RunMasterBase):
 
     @defer.inlineCallbacks
     def test_logs(self):
-        yield self.setupConfig(self.config_for_master_command(command=[
-            sys.executable, '-c', 'print("hello")'
-        ]))
+        yield self.setup_config_for_master_command(command=[sys.executable, '-c', 'print("hello")'])
 
         build = yield self.doForceBuild(wantSteps=True, useChange=self.get_change(), wantLogs=True)
         self.assertEqual(build['buildid'], 1)
@@ -78,9 +72,7 @@ class ShellMaster(RunMasterBase):
 
     @defer.inlineCallbacks
     def test_fails(self):
-        yield self.setupConfig(self.config_for_master_command(command=[
-            sys.executable, '-c', 'exit(1)'
-        ]))
+        yield self.setup_config_for_master_command(command=[sys.executable, '-c', 'exit(1)'])
 
         build = yield self.doForceBuild(wantSteps=True, useChange=self.get_change(), wantLogs=True)
         self.assertEqual(build['buildid'], 1)
@@ -88,9 +80,9 @@ class ShellMaster(RunMasterBase):
 
     @defer.inlineCallbacks
     def test_interrupt(self):
-        yield self.setupConfig(self.config_for_master_command(name='sleep', command=[
-            sys.executable, '-c', "while True: pass"
-        ]))
+        yield self.setup_config_for_master_command(
+            name='sleep', command=[sys.executable, '-c', "while True: pass"]
+        )
 
         d = self.doForceBuild(wantSteps=True, useChange=self.get_change(), wantLogs=True)
 
@@ -101,8 +93,9 @@ class ShellMaster(RunMasterBase):
                 yield asyncSleep(1)
                 brs = yield self.master.data.get(('buildrequests',))
                 brid = brs[-1]['buildrequestid']
-                self.master.data.control('cancel', {'reason': 'cancelled by test'},
-                                         ('buildrequests', brid))
+                self.master.data.control(
+                    'cancel', {'reason': 'cancelled by test'}, ('buildrequests', brid)
+                )
 
         yield self.master.mq.startConsuming(on_new_step, ('steps', None, 'new'))
 

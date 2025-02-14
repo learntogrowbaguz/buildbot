@@ -13,8 +13,13 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
 
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
+from typing import Callable
+from typing import ClassVar
+from typing import Sequence
 
 from twisted.python import deprecate
 from twisted.python import versions
@@ -32,6 +37,10 @@ from buildbot.steps.shell import ShellCommand
 from buildbot.steps.shell import Test
 from buildbot.steps.source.cvs import CVS
 from buildbot.steps.source.svn import SVN
+from buildbot.warnings import warn_deprecated
+
+if TYPE_CHECKING:
+    from buildbot.process.builder import Builder
 
 
 # deprecated, use BuildFactory.addStep
@@ -43,36 +52,42 @@ def s(steptype, **kwargs):
 
 
 class BuildFactory(util.ComparableMixin):
-
     """
     @cvar  buildClass: class to use when creating builds
     @type  buildClass: L{buildbot.process.build.Build}
     """
-    buildClass = Build
-    useProgress = 1
+
+    buildClass: type[Build] = Build
+    useProgress = True
     workdir = "build"
-    compare_attrs = ('buildClass', 'steps', 'useProgress', 'workdir')
+    compare_attrs: ClassVar[Sequence[str]] = ('buildClass', 'steps', 'useProgress', 'workdir')
 
     def __init__(self, steps=None):
         self.steps = []
         if steps:
             self.addSteps(steps)
 
-    def newBuild(self, requests):
+    def newBuild(self, requests, builder: Builder) -> Build:
         """Create a new Build instance.
 
         @param requests: a list of buildrequest dictionaries describing what is
         to be built
         """
-        b = self.buildClass(requests)
+        b = self.buildClass(requests, builder)
         b.useProgress = self.useProgress
         b.workdir = self.workdir
+        if callable(self.workdir):
+            warn_deprecated(
+                '4.3.0',
+                'BuildFactory workdir callable support has been deprecated. Use renderables instead',
+            )
         b.setStepFactories(self.steps)
         return b
 
     def addStep(self, step):
-        if not interfaces.IBuildStep.providedBy(step) and \
-                not interfaces.IBuildStepFactory.providedBy(step):
+        if not interfaces.IBuildStep.providedBy(
+            step
+        ) and not interfaces.IBuildStepFactory.providedBy(step):
             raise TypeError('step must be an instance of a BuildStep')
         self.steps.append(buildstep.get_factory_from_step_or_factory(step))
 
@@ -86,11 +101,15 @@ class BuildFactory(util.ComparableMixin):
         if withSecrets:
             self.addStep(RemoveWorkerFileSecret(withSecrets))
 
+    def setSkipBuildIf(self, predicate: Callable[[Build], bool]):
+        self.skipBuildIf = predicate
+
     @contextmanager
     def withSecrets(self, secrets):
         self.addStep(DownloadSecretsToWorker(secrets))
         yield self
         self.addStep(RemoveWorkerFileSecret(secrets))
+
 
 # BuildFactory subclasses for common build tools
 
@@ -101,14 +120,17 @@ class _DefaultCommand:
 
 
 class GNUAutoconf(BuildFactory):
-
-    def __init__(self, source, configure="./configure",
-                 configureEnv=None,
-                 configureFlags=None,
-                 reconf=None,
-                 compile=_DefaultCommand,
-                 test=_DefaultCommand,
-                 distcheck=_DefaultCommand):
+    def __init__(
+        self,
+        source,
+        configure="./configure",
+        configureEnv=None,
+        configureFlags=None,
+        reconf=None,
+        compile=_DefaultCommand,
+        test=_DefaultCommand,
+        distcheck=_DefaultCommand,
+    ):
         if configureEnv is None:
             configureEnv = {}
         if configureFlags is None:
@@ -125,8 +147,7 @@ class GNUAutoconf(BuildFactory):
         if reconf is True:
             reconf = ["autoreconf", "-si"]
         if reconf is not None:
-            self.addStep(
-                ShellCommand(name="autoreconf", command=reconf, env=configureEnv))
+            self.addStep(ShellCommand(name="autoreconf", command=reconf, env=configureEnv))
 
         if configure is not None:
             # we either need to wind up with a string (which will be
@@ -135,7 +156,7 @@ class GNUAutoconf(BuildFactory):
             if isinstance(configure, str):
                 if configureFlags:
                     assert " " not in configure  # please use list instead
-                    command = [configure] + configureFlags
+                    command = [configure, *configureFlags]
                 else:
                     command = configure
             else:
@@ -151,7 +172,6 @@ class GNUAutoconf(BuildFactory):
 
 
 class CPAN(BuildFactory):
-
     def __init__(self, source, perl="perl"):
         super().__init__([source])
         self.addStep(Configure(command=[perl, "Makefile.PL"]))
@@ -159,8 +179,9 @@ class CPAN(BuildFactory):
         self.addStep(PerlModuleTest(command=["make", "test"]))
 
 
+# deprecated, use Distutils
+@deprecate.deprecated(versions.Version("buildbot", 4, 0, 0))
 class Distutils(BuildFactory):
-
     def __init__(self, source, python="python", test=None):
         super().__init__([source])
         self.addStep(Compile(command=[python, "./setup.py", "build"]))
@@ -169,7 +190,6 @@ class Distutils(BuildFactory):
 
 
 class Trial(BuildFactory):
-
     """Build a python module that uses distutils and trial. Set 'tests' to
     the module in which the tests can be found, or set useTestCaseNames=True
     to always have trial figure out which tests to run (based upon which
@@ -184,10 +204,19 @@ class Trial(BuildFactory):
     randomly = False
     recurse = False
 
-    def __init__(self, source,
-                 buildpython=None, trialpython=None, trial=None,
-                 testpath=".", randomly=None, recurse=None,
-                 tests=None, useTestCaseNames=False, env=None):
+    def __init__(
+        self,
+        source,
+        buildpython=None,
+        trialpython=None,
+        trial=None,
+        testpath=".",
+        randomly=None,
+        recurse=None,
+        tests=None,
+        useTestCaseNames=False,
+        env=None,
+    ):
         super().__init__([source])
         assert tests or useTestCaseNames, "must use one or the other"
         if buildpython is None:
@@ -202,16 +231,21 @@ class Trial(BuildFactory):
             self.recurse = recurse
 
         from buildbot.steps.python_twisted import Trial
-        buildcommand = buildpython + ["./setup.py", "build"]
+
+        buildcommand = [*buildpython, "./setup.py", "build"]
         self.addStep(Compile(command=buildcommand, env=env))
-        self.addStep(Trial(
-                     python=trialpython, trial=self.trial,
-                     testpath=testpath,
-                     tests=tests, testChanges=useTestCaseNames,
-                     randomly=self.randomly,
-                     recurse=self.recurse,
-                     env=env,
-                     ))
+        self.addStep(
+            Trial(
+                python=trialpython,
+                trial=self.trial,
+                testpath=testpath,
+                tests=tests,
+                testChanges=useTestCaseNames,
+                randomly=self.randomly,
+                recurse=self.recurse,
+                env=env,
+            )
+        )
 
 
 # compatibility classes, will go away. Note that these only offer
@@ -224,51 +258,57 @@ ConfigurableBuildFactory = BuildFactory
 class BasicBuildFactory(GNUAutoconf):
     # really a "GNU Autoconf-created tarball -in-CVS tree" builder
 
-    def __init__(self, cvsroot, cvsmodule,
-                 configure=None, configureEnv=None,
-                 compile="make all",
-                 test="make check", cvsCopy=False):
+    def __init__(
+        self,
+        cvsroot,
+        cvsmodule,
+        configure=None,
+        configureEnv=None,
+        compile="make all",
+        test="make check",
+        cvsCopy=False,
+    ):
         if configureEnv is None:
             configureEnv = {}
         mode = "full"
         method = "clobber"
         if cvsCopy:
             method = "copy"
-        source = CVS(
-            cvsroot=cvsroot, cvsmodule=cvsmodule, mode=mode, method=method)
-        super().__init__(source,
-                         configure=configure, configureEnv=configureEnv,
-                         compile=compile,
-                         test=test)
+        source = CVS(cvsroot=cvsroot, cvsmodule=cvsmodule, mode=mode, method=method)
+        super().__init__(
+            source, configure=configure, configureEnv=configureEnv, compile=compile, test=test
+        )
 
 
 class QuickBuildFactory(BasicBuildFactory):
     useProgress = False
 
-    def __init__(self, cvsroot, cvsmodule,
-                 configure=None, configureEnv=None,
-                 compile="make all",
-                 test="make check", cvsCopy=False):
+    def __init__(
+        self,
+        cvsroot,
+        cvsmodule,
+        configure=None,
+        configureEnv=None,
+        compile="make all",
+        test="make check",
+        cvsCopy=False,
+    ):
         if configureEnv is None:
             configureEnv = {}
         mode = "incremental"
         source = CVS(cvsroot=cvsroot, cvsmodule=cvsmodule, mode=mode)
-        super().__init__(source,
-                         configure=configure, configureEnv=configureEnv,
-                         compile=compile,
-                         test=test)
+        super().__init__(
+            source, configure=configure, configureEnv=configureEnv, compile=compile, test=test
+        )
 
 
 class BasicSVN(GNUAutoconf):
-
-    def __init__(self, svnurl,
-                 configure=None, configureEnv=None,
-                 compile="make all",
-                 test="make check"):
+    def __init__(
+        self, svnurl, configure=None, configureEnv=None, compile="make all", test="make check"
+    ):
         if configureEnv is None:
             configureEnv = {}
         source = SVN(svnurl=svnurl, mode="incremental")
-        super().__init__(source,
-                         configure=configure, configureEnv=configureEnv,
-                         compile=compile,
-                         test=test)
+        super().__init__(
+            source, configure=configure, configureEnv=configureEnv, compile=compile, test=test
+        )

@@ -25,26 +25,30 @@ from buildbot.test.util.logging import LoggingMixin
 from buildbot.test.util.reporter import ReporterTestMixin
 
 
-class TestZulipStatusPush(unittest.TestCase, ReporterTestMixin, LoggingMixin, ConfigErrorsMixin,
-                          TestReactorMixin):
-
+class TestZulipStatusPush(
+    ReporterTestMixin, LoggingMixin, ConfigErrorsMixin, TestReactorMixin, unittest.TestCase
+):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.setup_reporter_test()
-        self.master = fakemaster.make_master(
-            testcase=self, wantData=True, wantDb=True, wantMq=True)
+        self.master = yield fakemaster.make_master(
+            testcase=self, wantData=True, wantDb=True, wantMq=True
+        )
 
-    @defer.inlineCallbacks
-    def tearDown(self):
-        if self.master.running:
-            yield self.master.stopService()
+        @defer.inlineCallbacks
+        def cleanup():
+            if self.master.running:
+                yield self.master.stopService()
+
+        self.addCleanup(cleanup)
 
     @defer.inlineCallbacks
     def setupZulipStatusPush(self, endpoint="http://example.com", token="123", stream=None):
-        self.sp = ZulipStatusPush(
-            endpoint=endpoint, token=token, stream=stream)
+        self.sp = ZulipStatusPush(endpoint=endpoint, token=token, stream=stream)
         self._http = yield fakehttpclientservice.HTTPClientService.getService(
-            self.master, self, endpoint, debug=None, verify=None)
+            self.master, self, endpoint, debug=None, verify=None
+        )
         yield self.sp.setServiceParent(self.master)
         yield self.master.startService()
 
@@ -59,10 +63,11 @@ class TestZulipStatusPush(unittest.TestCase, ReporterTestMixin, LoggingMixin, Co
                 "event": 'new',
                 "buildid": 20,
                 "buildername": "Builder0",
-                "url": "http://localhost:8080/#builders/79/builds/0",
+                "url": "http://localhost:8080/#/builders/79/builds/0",
                 "project": "testProject",
-                "timestamp": 10000001
-            })
+                "timestamp": 10000001,
+            },
+        )
         yield self.sp._got_event(('builds', 20, 'new'), build)
 
     @defer.inlineCallbacks
@@ -76,11 +81,12 @@ class TestZulipStatusPush(unittest.TestCase, ReporterTestMixin, LoggingMixin, Co
                 "event": "finished",
                 "buildid": 20,
                 "buildername": "Builder0",
-                "url": "http://localhost:8080/#builders/79/builds/0",
+                "url": "http://localhost:8080/#/builders/79/builds/0",
                 "project": "testProject",
                 "timestamp": 10000005,
-                "results": 0
-            })
+                "results": 0,
+            },
+        )
         yield self.sp._got_event(('builds', 20, 'finished'), build)
 
     @defer.inlineCallbacks
@@ -94,21 +100,20 @@ class TestZulipStatusPush(unittest.TestCase, ReporterTestMixin, LoggingMixin, Co
                 "event": "finished",
                 "buildid": 20,
                 "buildername": "Builder0",
-                "url": "http://localhost:8080/#builders/79/builds/0",
+                "url": "http://localhost:8080/#/builders/79/builds/0",
                 "project": "testProject",
                 "timestamp": 10000005,
-                "results": 0
-            })
+                "results": 0,
+            },
+        )
         yield self.sp._got_event(('builds', 20, 'finished'), build)
 
     def test_endpoint_string(self):
-        with self.assertRaisesConfigError(
-                "Endpoint must be a string"):
+        with self.assertRaisesConfigError("Endpoint must be a string"):
             ZulipStatusPush(endpoint=1234, token="abcd")
 
     def test_token_string(self):
-        with self.assertRaisesConfigError(
-                "Token must be a string"):
+        with self.assertRaisesConfigError("Token must be a string"):
             ZulipStatusPush(endpoint="http://example.com", token=1234)
 
     @defer.inlineCallbacks
@@ -122,10 +127,12 @@ class TestZulipStatusPush(unittest.TestCase, ReporterTestMixin, LoggingMixin, Co
                 "event": 'new',
                 "buildid": 20,
                 "buildername": "Builder0",
-                "url": "http://localhost:8080/#builders/79/builds/0",
+                "url": "http://localhost:8080/#/builders/79/builds/0",
                 "project": "testProject",
-                "timestamp": 10000001
-            }, code=500)
+                "timestamp": 10000001,
+            },
+            code=500,
+        )
         self.setUpLogging()
         yield self.sp._got_event(('builds', 20, 'new'), build)
         self.assertLogged('500: Error pushing build status to Zulip')
@@ -141,10 +148,12 @@ class TestZulipStatusPush(unittest.TestCase, ReporterTestMixin, LoggingMixin, Co
                 "event": 'new',
                 "buildid": 20,
                 "buildername": "Builder0",
-                "url": "http://localhost:8080/#builders/79/builds/0",
+                "url": "http://localhost:8080/#/builders/79/builds/0",
                 "project": "testProject",
-                "timestamp": 10000001
-            }, code=404)
+                "timestamp": 10000001,
+            },
+            code=404,
+        )
         self.setUpLogging()
         yield self.sp._got_event(('builds', 20, 'new'), build)
         self.assertLogged('404: Error pushing build status to Zulip')
@@ -160,11 +169,13 @@ class TestZulipStatusPush(unittest.TestCase, ReporterTestMixin, LoggingMixin, Co
                 "event": 'new',
                 "buildid": 20,
                 "buildername": "Builder0",
-                "url": "http://localhost:8080/#builders/79/builds/0",
+                "url": "http://localhost:8080/#/builders/79/builds/0",
                 "project": "testProject",
-                "timestamp": 10000001
-            }, code=401, content_json={"result": "error", "msg": "Invalid API key",
-                                       "code": "INVALID_API_KEY"})
+                "timestamp": 10000001,
+            },
+            code=401,
+            content_json={"result": "error", "msg": "Invalid API key", "code": "INVALID_API_KEY"},
+        )
         self.setUpLogging()
         yield self.sp._got_event(('builds', 20, 'new'), build)
         self.assertLogged('401: Error pushing build status to Zulip')

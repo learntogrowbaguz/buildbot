@@ -13,19 +13,19 @@
 #
 # Copyright Buildbot Team Members
 
+from __future__ import annotations
 
 from buildbot.process.properties import Properties
 from buildbot.test.fake.state import State
 
 
 class Change(State):
-
     project = ''
     repository = ''
     branch = ''
     category = ''
     codebase = ''
-    properties = {}
+    properties: dict | Properties = {}
 
     def __init__(self, **kw):
         super().__init__(**kw)

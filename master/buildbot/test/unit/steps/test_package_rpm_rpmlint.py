@@ -23,38 +23,28 @@ from buildbot.test.steps import TestBuildStepMixin
 
 
 class TestRpmLint(TestBuildStepMixin, TestReactorMixin, unittest.TestCase):
-
     def setUp(self):
         self.setup_test_reactor()
         return self.setup_test_build_step()
 
-    def tearDown(self):
-        return self.tear_down_test_build_step()
-
     def test_success(self):
         self.setup_step(rpmlint.RpmLint())
-        self.expect_commands(
-            ExpectShell(workdir='wkdir',
-                        command=['rpmlint', '-i', '.'])
-            .exit(0))
-        self.expect_outcome(
-            result=SUCCESS, state_string='Finished checking RPM/SPEC issues')
+        self.expect_commands(ExpectShell(workdir='wkdir', command=['rpmlint', '-i', '.']).exit(0))
+        self.expect_outcome(result=SUCCESS, state_string='Finished checking RPM/SPEC issues')
         return self.run_step()
 
     def test_fileloc_success(self):
         self.setup_step(rpmlint.RpmLint(fileloc='RESULT'))
         self.expect_commands(
-            ExpectShell(workdir='wkdir',
-                        command=['rpmlint', '-i', 'RESULT'])
-            .exit(0))
+            ExpectShell(workdir='wkdir', command=['rpmlint', '-i', 'RESULT']).exit(0)
+        )
         self.expect_outcome(result=SUCCESS)
         return self.run_step()
 
     def test_config_success(self):
         self.setup_step(rpmlint.RpmLint(config='foo.cfg'))
         self.expect_commands(
-            ExpectShell(workdir='wkdir',
-                        command=['rpmlint', '-i', '-f', 'foo.cfg', '.'])
-            .exit(0))
+            ExpectShell(workdir='wkdir', command=['rpmlint', '-i', '-f', 'foo.cfg', '.']).exit(0)
+        )
         self.expect_outcome(result=SUCCESS)
         return self.run_step()

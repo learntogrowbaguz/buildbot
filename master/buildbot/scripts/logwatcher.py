@@ -43,7 +43,6 @@ class ReconfigError(Exception):
 
 
 class TailProcess(protocol.ProcessProtocol):
-
     def outReceived(self, data):
         self.lw.dataReceived(data)
 
@@ -56,6 +55,7 @@ class LineOnlyLongLineReceiver(protocol.Protocol):
     This is almost the same as Twisted's LineOnlyReceiver except that long lines are handled
     appropriately.
     """
+
     _buffer = b''
     delimiter = b'\r\n'
     MAX_LENGTH = 16384
@@ -110,12 +110,13 @@ class LogWatcher(LineOnlyLongLineReceiver):
             tailBin = "/usr/xpg4/bin/tail"
         elif platform.system().lower() == 'haiku' and os.path.exists('/bin/tail'):
             tailBin = "/bin/tail"
+        elif os.path.exists('/etc/nixos') and os.path.exists('/run/current-system/sw/bin/tail'):
+            tailBin = "/run/current-system/sw/bin/tail"
         else:
             tailBin = "/usr/bin/tail"
 
-        args = ("tail", "-f", "-n", "0", self.logfile)
-        self.p = self._reactor.spawnProcess(self.pp, tailBin, args,
-                                            env=os.environ)
+        args = ("tail", "-F", "-n", "0", self.logfile)
+        self.p = self._reactor.spawnProcess(self.pp, tailBin, args, env=os.environ)
         self.running = True
         d = defer.maybeDeferred(self._start)
         return d
@@ -175,8 +176,14 @@ class LogWatcher(LineOnlyLongLineReceiver):
 
         # certain lines indicate progress, so we "cancel" the timeout
         # and it will get re-added when it fires
-        PROGRESS_TEXT = [b'Starting BuildMaster', b'Loading configuration from', b'added builder',
-                         b'adding scheduler', b'Loading builder', b'Starting factory']
+        PROGRESS_TEXT = [
+            b'Starting BuildMaster',
+            b'Loading configuration from',
+            b'added builder',
+            b'adding scheduler',
+            b'Loading builder',
+            b'Starting factory',
+        ]
         for progressText in PROGRESS_TEXT:
             if progressText in line:
                 self.timer = None
@@ -184,8 +191,10 @@ class LogWatcher(LineOnlyLongLineReceiver):
 
         if b"message from master: attached" in line:
             return self.finished("worker")
-        if b"configuration update aborted" in line or \
-                b'configuration update partially applied' in line:
+        if (
+            b"configuration update aborted" in line
+            or b'configuration update partially applied' in line
+        ):
             return self.finished(Failure(ReconfigError()))
         if b"Server Shut Down" in line:
             return self.finished(Failure(ReconfigError()))

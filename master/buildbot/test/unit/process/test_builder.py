@@ -14,11 +14,9 @@
 # Copyright Buildbot Team Members
 
 import random
+from unittest import mock
 
 from parameterized import parameterized
-
-import mock
-
 from twisted.internet import defer
 from twisted.trial import unittest
 
@@ -37,16 +35,13 @@ from buildbot.worker import AbstractLatentWorker
 
 
 class BuilderMixin:
-
+    @defer.inlineCallbacks
     def setUpBuilderMixin(self):
         self.factory = factory.BuildFactory()
-        self.master = fakemaster.make_master(self, wantData=True)
-        self.mq = self.master.mq
-        self.db = self.master.db
+        self.master = yield fakemaster.make_master(self, wantData=True)
 
     # returns a Deferred that returns None
-    def makeBuilder(self, name="bldr", patch_random=False, noReconfig=False,
-                    **config_kwargs):
+    def makeBuilder(self, name="bldr", patch_random=False, noReconfig=False, **config_kwargs):
         """Set up C{self.bldr}"""
         # only include the necessary required config, plus user-requested
         self.config_args = {
@@ -54,13 +49,12 @@ class BuilderMixin:
             'workername': 'wrk',
             'builddir': 'bdir',
             'workerbuilddir': "wbdir",
-            'factory': self.factory
+            'factory': self.factory,
         }
         self.config_args.update(config_kwargs)
         self.builder_config = config.BuilderConfig(**self.config_args)
 
-        self.bldr = builder.Builder(
-            self.builder_config.name)
+        self.bldr = builder.Builder(self.builder_config.name)
         self.bldr.master = self.master
         self.bldr.botmaster = self.master.botmaster
 
@@ -70,13 +64,13 @@ class BuilderMixin:
         def _startBuildFor(workerforbuilder, buildrequests):
             self.builds_started.append((workerforbuilder, buildrequests))
             return defer.succeed(True)
+
         self.bldr._startBuildFor = _startBuildFor
 
         if patch_random:
             # patch 'random.choice' to always take the worker that sorts
             # last, based on its name
-            self.patch(random, "choice",
-                       lambda lst: sorted(lst, key=lambda m: m.name)[-1])
+            self.patch(random, "choice", lambda lst: sorted(lst, key=lambda m: m.name)[-1])
 
         self.bldr.startService()
 
@@ -110,12 +104,13 @@ class FakeLatentWorker(AbstractLatentWorker):
 
 
 class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         # a collection of rows that would otherwise clutter up every test
-        self.setUpBuilderMixin()
+        yield self.setUpBuilderMixin()
         self.base_rows = [
+            fakedb.Master(id=fakedb.FakeDBConnector.MASTER_ID),
             fakedb.SourceStamp(id=21),
             fakedb.Buildset(id=11, reason='because'),
             fakedb.BuildsetSourceStamp(buildsetid=11, sourcestampid=21),
@@ -131,13 +126,14 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
         def _startBuildFor(workerforbuilder, buildrequests):
             self.builds_started.append((workerforbuilder, buildrequests))
             return defer.succeed(startBuildsForSucceeds)
+
         self.bldr._startBuildFor = _startBuildFor
 
     def assertBuildsStarted(self, exp):
         # munge builds_started into a list of (worker, [brids])
         builds_started = [
-            (wrk.name, [br.id for br in buildreqs])
-            for (wrk, buildreqs) in self.builds_started]
+            (wrk.name, [br.id for br in buildreqs]) for (wrk, buildreqs) in self.builds_started
+        ]
         self.assertEqual(sorted(builds_started), sorted(exp))
 
     def setWorkerForBuilders(self, workerforbuilders):
@@ -193,8 +189,7 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
         self.assertBuildsStarted([('worker', [10])])
 
     @defer.inlineCallbacks
-    def do_test_getCollapseRequestsFn(self, builder_param=None,
-                                      global_param=None, expected=0):
+    def do_test_getCollapseRequestsFn(self, builder_param=None, global_param=None, expected=0):
         def cble():
             pass
 
@@ -259,6 +254,7 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
 
         def canStartBuild(bldr, worker, breq):
             return breq == 100
+
         canStartBuild = mock.Mock(side_effect=canStartBuild)
 
         self.bldr.config.canStartBuild = canStartBuild
@@ -285,6 +281,7 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
 
         def canStartBuild(bldr, wfb, breq):
             return defer.succeed(breq == 100)
+
         canStartBuild = mock.Mock(side_effect=canStartBuild)
 
         self.bldr.config.canStartBuild = canStartBuild
@@ -303,37 +300,39 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
     def test_canStartBuild_cant_acquire_locks_but_no_locks(self):
         yield self.makeBuilder()
 
+        self.bldr.config.locks = [mock.Mock]
         self.bldr.botmaster.getLockFromLockAccesses = mock.Mock(return_value=[])
+        self.bldr._can_acquire_locks = lambda _: False
 
         wfb = mock.Mock()
         wfb.worker = FakeWorker('worker')
 
-        with mock.patch(
-                'buildbot.process.build.Build._canAcquireLocks',
-                mock.Mock(return_value=False)):
-            startable = yield self.bldr.canStartBuild(wfb, 100)
-            self.assertEqual(startable, True)
+        startable = yield self.bldr.canStartBuild(wfb, 100)
+        self.assertEqual(startable, True)
 
     @defer.inlineCallbacks
     def test_canStartBuild_with_locks(self):
         yield self.makeBuilder()
 
-        self.bldr.botmaster.getLockFromLockAccesses = mock.Mock(return_value=[mock.Mock()])
+        self.bldr.config.locks = [mock.Mock]
+        self.bldr.botmaster.getLockFromLockAccesses = mock.Mock(
+            return_value=[(mock.Mock(), mock.Mock())]
+        )
+        self.bldr._can_acquire_locks = lambda _: False
 
         wfb = mock.Mock()
         wfb.worker = FakeWorker('worker')
 
-        with mock.patch(
-                'buildbot.process.build.Build._canAcquireLocks',
-                mock.Mock(return_value=False)):
-            startable = yield self.bldr.canStartBuild(wfb, 100)
-            self.assertEqual(startable, False)
+        startable = yield self.bldr.canStartBuild(wfb, 100)
+        self.assertEqual(startable, False)
 
     @defer.inlineCallbacks
     def test_canStartBuild_with_renderable_locks(self):
         yield self.makeBuilder()
 
-        self.bldr.botmaster.getLockFromLockAccesses = mock.Mock(return_value=[mock.Mock()])
+        self.bldr.botmaster.getLockFromLockAccesses = mock.Mock(
+            return_value=[(mock.Mock(), mock.Mock())]
+        )
 
         renderedLocks = [False]
 
@@ -343,18 +342,16 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
             return [mock.Mock()]
 
         self.bldr.config.locks = rendered_locks
+        self.bldr._can_acquire_locks = lambda _: False
 
         wfb = mock.Mock()
         wfb.worker = FakeWorker('worker')
 
         with mock.patch(
-                'buildbot.process.build.Build._canAcquireLocks',
-                mock.Mock(return_value=False)):
-            with mock.patch(
-                    'buildbot.process.build.Build.setupPropertiesKnownBeforeBuildStarts',
-                    mock.Mock()):
-                startable = yield self.bldr.canStartBuild(wfb, 100)
-                self.assertEqual(startable, False)
+            'buildbot.process.build.Build.setup_properties_known_before_build_starts', mock.Mock()
+        ):
+            startable = yield self.bldr.canStartBuild(wfb, 100)
+            self.assertEqual(startable, False)
 
         self.assertTrue(renderedLocks[0])
 
@@ -366,8 +363,8 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
         wfb.worker = FakeLatentWorker(is_compatible_with_build=False)
 
         with mock.patch(
-                'buildbot.process.build.Build.setupPropertiesKnownBeforeBuildStarts',
-                mock.Mock()):
+            'buildbot.process.build.Build.setup_properties_known_before_build_starts', mock.Mock()
+        ):
             startable = yield self.bldr.canStartBuild(wfb, 100)
         self.assertFalse(startable)
 
@@ -375,7 +372,10 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
     def test_canStartBuild_with_renderable_locks_with_compatible_latent_worker(self):
         yield self.makeBuilder()
 
-        self.bldr.botmaster.getLockFromLockAccesses = mock.Mock(return_value=[mock.Mock()])
+        self.bldr.config.locks = [mock.Mock]
+        self.bldr.botmaster.getLockFromLockAccesses = mock.Mock(
+            return_value=[(mock.Mock(), mock.Mock())]
+        )
 
         rendered_locks = [False]
 
@@ -385,18 +385,16 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
             return [mock.Mock()]
 
         self.bldr.config.locks = locks_renderer
+        self.bldr._can_acquire_locks = lambda _: False
 
         wfb = mock.Mock()
         wfb.worker = FakeLatentWorker(is_compatible_with_build=True)
 
         with mock.patch(
-                'buildbot.process.build.Build._canAcquireLocks',
-                mock.Mock(return_value=False)):
-            with mock.patch(
-                    'buildbot.process.build.Build.setupPropertiesKnownBeforeBuildStarts',
-                    mock.Mock()):
-                startable = yield self.bldr.canStartBuild(wfb, 100)
-                self.assertEqual(startable, False)
+            'buildbot.process.build.Build.setup_properties_known_before_build_starts', mock.Mock()
+        ):
+            startable = yield self.bldr.canStartBuild(wfb, 100)
+            self.assertEqual(startable, False)
         self.assertFalse(startable)
         self.assertTrue(rendered_locks[0])
 
@@ -437,7 +435,7 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_getBuilderId(self):
         self.factory = factory.BuildFactory()
-        self.master = fakemaster.make_master(self, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantData=True)
         # only include the necessary required config, plus user-requested
         self.bldr = builder.Builder('bldr')
         self.bldr.master = self.master
@@ -458,8 +456,8 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
         yield self.makeBuilder()
 
         with assertProducesWarning(
-                Warning,
-                message_pattern="'Builder.expectations' is deprecated."):
+            Warning, message_pattern="'Builder.expectations' is deprecated."
+        ):
             deprecated = self.bldr.expectations
 
         self.assertIdentical(deprecated, None)
@@ -472,17 +470,17 @@ class TestBuilder(TestReactorMixin, BuilderMixin, unittest.TestCase):
 
         yield self.makeBuilder(defaultProperties={'bar': 'onoes', 'cuckoo': 42})
 
-        self.bldr.setupProperties(props)
+        yield self.bldr.setup_properties(props)
 
-        self.assertEquals(props.getProperty('bar'), 'bleh')
-        self.assertEquals(props.getProperty('cuckoo'), 42)
+        self.assertEqual(props.getProperty('bar'), 'bleh')
+        self.assertEqual(props.getProperty('cuckoo'), 42)
 
 
 class TestGetBuilderId(TestReactorMixin, BuilderMixin, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpBuilderMixin()
+        yield self.setUpBuilderMixin()
 
     @defer.inlineCallbacks
     def test_getBuilderId(self):
@@ -501,39 +499,31 @@ class TestGetBuilderId(TestReactorMixin, BuilderMixin, unittest.TestCase):
         self.assertIsInstance(arg, str)
 
 
-class TestGetOldestRequestTime(TestReactorMixin, BuilderMixin,
-                               unittest.TestCase):
-
+class TestGetOldestRequestTime(TestReactorMixin, BuilderMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpBuilderMixin()
+        yield self.setUpBuilderMixin()
 
         # a collection of rows that would otherwise clutter up every test
-        master_id = fakedb.FakeBuildRequestsComponent.MASTER_ID
+        master_id = fakedb.FakeDBConnector.MASTER_ID
         self.base_rows = [
+            fakedb.Master(id=master_id),
             fakedb.SourceStamp(id=21),
             fakedb.Buildset(id=11, reason='because'),
             fakedb.BuildsetSourceStamp(buildsetid=11, sourcestampid=21),
             fakedb.Builder(id=77, name='bldr1'),
             fakedb.Builder(id=78, name='bldr2'),
             fakedb.Builder(id=182, name='foo@bar'),
-            fakedb.BuildRequest(id=111, submitted_at=1000,
-                                builderid=77, buildsetid=11),
-            fakedb.BuildRequest(id=222, submitted_at=2000,
-                                builderid=77, buildsetid=11),
-            fakedb.BuildRequestClaim(brid=222, masterid=master_id,
-                                     claimed_at=2001),
-            fakedb.BuildRequest(id=333, submitted_at=3000,
-                                builderid=77, buildsetid=11),
-            fakedb.BuildRequest(id=444, submitted_at=2500,
-                                builderid=78, buildsetid=11),
-            fakedb.BuildRequestClaim(brid=444, masterid=master_id,
-                                     claimed_at=2501),
-            fakedb.BuildRequest(id=555, submitted_at=2800,
-                                builderid=182, buildsetid=11),
+            fakedb.BuildRequest(id=111, submitted_at=1000, builderid=77, buildsetid=11),
+            fakedb.BuildRequest(id=222, submitted_at=2000, builderid=77, buildsetid=11),
+            fakedb.BuildRequestClaim(brid=222, masterid=master_id, claimed_at=2001),
+            fakedb.BuildRequest(id=333, submitted_at=3000, builderid=77, buildsetid=11),
+            fakedb.BuildRequest(id=444, submitted_at=2500, builderid=78, buildsetid=11),
+            fakedb.BuildRequestClaim(brid=444, masterid=master_id, claimed_at=2501),
+            fakedb.BuildRequest(id=555, submitted_at=2800, builderid=182, buildsetid=11),
         ]
-        yield self.db.insertTestData(self.base_rows)
+        yield self.master.db.insert_test_data(self.base_rows)
 
     @defer.inlineCallbacks
     def test_gort_unclaimed(self):
@@ -556,32 +546,33 @@ class TestGetOldestRequestTime(TestReactorMixin, BuilderMixin,
 
 
 class TestGetNewestCompleteTime(TestReactorMixin, BuilderMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpBuilderMixin()
+        yield self.setUpBuilderMixin()
 
         # a collection of rows that would otherwise clutter up every test
-        master_id = fakedb.FakeBuildRequestsComponent.MASTER_ID
+        master_id = fakedb.FakeDBConnector.MASTER_ID
         self.base_rows = [
+            fakedb.Master(id=master_id),
             fakedb.SourceStamp(id=21),
             fakedb.Buildset(id=11, reason='because'),
             fakedb.BuildsetSourceStamp(buildsetid=11, sourcestampid=21),
             fakedb.Builder(id=77, name='bldr1'),
             fakedb.Builder(id=78, name='bldr2'),
-            fakedb.BuildRequest(id=111, submitted_at=1000, complete=1, complete_at=1000,
-                                builderid=77, buildsetid=11),
-            fakedb.BuildRequest(id=222, submitted_at=2000, complete=1, complete_at=4000,
-                                builderid=77, buildsetid=11),
-            fakedb.BuildRequest(id=333, submitted_at=3000, complete=1, complete_at=3000,
-                                builderid=77, buildsetid=11),
-            fakedb.BuildRequest(id=444, submitted_at=2500,
-                                builderid=78, buildsetid=11),
-            fakedb.BuildRequestClaim(brid=444, masterid=master_id,
-                                     claimed_at=2501),
+            fakedb.BuildRequest(
+                id=111, submitted_at=1000, complete=1, complete_at=1000, builderid=77, buildsetid=11
+            ),
+            fakedb.BuildRequest(
+                id=222, submitted_at=2000, complete=1, complete_at=4000, builderid=77, buildsetid=11
+            ),
+            fakedb.BuildRequest(
+                id=333, submitted_at=3000, complete=1, complete_at=3000, builderid=77, buildsetid=11
+            ),
+            fakedb.BuildRequest(id=444, submitted_at=2500, builderid=78, buildsetid=11),
+            fakedb.BuildRequestClaim(brid=444, masterid=master_id, claimed_at=2501),
         ]
-        yield self.db.insertTestData(self.base_rows)
+        yield self.master.db.insert_test_data(self.base_rows)
 
     @defer.inlineCallbacks
     def test_gnct_completed(self):
@@ -596,19 +587,65 @@ class TestGetNewestCompleteTime(TestReactorMixin, BuilderMixin, unittest.TestCas
         self.assertEqual(rqtime, None)
 
 
-class TestReconfig(TestReactorMixin, BuilderMixin, unittest.TestCase):
-
-    """Tests that a reconfig properly updates all attributes"""
-
+class TestGetHighestPriority(TestReactorMixin, BuilderMixin, unittest.TestCase):
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpBuilderMixin()
+        yield self.setUpBuilderMixin()
+
+        # a collection of rows that would otherwise clutter up every test
+        master_id = fakedb.FakeDBConnector.MASTER_ID
+        self.base_rows = [
+            fakedb.Master(id=master_id),
+            fakedb.SourceStamp(id=21),
+            fakedb.Buildset(id=11, reason='because'),
+            fakedb.BuildsetSourceStamp(buildsetid=11, sourcestampid=21),
+            fakedb.Builder(id=77, name='bldr1'),
+            fakedb.Builder(id=78, name='bldr2'),
+            fakedb.BuildRequest(id=111, submitted_at=1000, builderid=77, buildsetid=11, priority=0),
+            fakedb.BuildRequest(
+                id=222, submitted_at=2000, builderid=77, buildsetid=11, priority=10
+            ),
+            fakedb.BuildRequestClaim(brid=222, masterid=master_id, claimed_at=2001),
+            fakedb.BuildRequest(id=333, submitted_at=3000, builderid=77, buildsetid=11, priority=5),
+            fakedb.BuildRequest(id=444, submitted_at=3001, builderid=77, buildsetid=11, priority=3),
+            fakedb.BuildRequest(id=555, submitted_at=2500, builderid=78, buildsetid=11),
+            fakedb.BuildRequestClaim(brid=555, masterid=master_id, claimed_at=2501),
+        ]
+        yield self.master.db.insert_test_data(self.base_rows)
+
+    @defer.inlineCallbacks
+    def test_ghp_unclaimed(self):
+        yield self.makeBuilder(name='bldr1')
+        priority = yield self.bldr.get_highest_priority()
+        self.assertEqual(priority, 5)
+
+    @defer.inlineCallbacks
+    def test_ghp_all_claimed(self):
+        yield self.makeBuilder(name='bldr2')
+        priority = yield self.bldr.get_highest_priority()
+        self.assertEqual(priority, None)
+
+
+class TestReconfig(TestReactorMixin, BuilderMixin, unittest.TestCase):
+    """Tests that a reconfig properly updates all attributes"""
+
+    @defer.inlineCallbacks
+    def setUp(self):
+        self.setup_test_reactor()
+        yield self.setUpBuilderMixin()
+
+        yield self.master.db.insert_test_data([
+            fakedb.Project(id=301, name='old_project'),
+            fakedb.Project(id=302, name='new_project'),
+        ])
 
     @defer.inlineCallbacks
     def test_reconfig(self):
-        yield self.makeBuilder(description="Old", tags=["OldTag"])
+        yield self.makeBuilder(description="Old", project="old_project", tags=["OldTag"])
         new_builder_config = config.BuilderConfig(**self.config_args)
         new_builder_config.description = "New"
+        new_builder_config.project = "new_project"
         new_builder_config.tags = ["NewTag"]
 
         mastercfg = MasterConfig()
@@ -620,42 +657,57 @@ class TestReconfig(TestReactorMixin, BuilderMixin, unittest.TestCase):
 
         builder_dict = yield self.master.data.get(('builders', self.bldr._builderid))
         self.assertEqual(builder_dict['description'], 'New')
+        self.assertEqual(builder_dict['projectid'], 302)
         self.assertEqual(builder_dict['tags'], ['NewTag'])
 
         self.assertIdentical(self.bldr.config, new_builder_config)
 
     @parameterized.expand([
-        ('only_description', 'New', ['OldTag']),
-        ('only_tags', 'Old', ['NewTag']),
+        ('only_description', 'New', 'old_project', ['OldTag'], 301),
+        ('only_project', 'Old', 'new_project', ['OldTag'], 302),
+        ('only_tags', 'Old', 'old_project', ['NewTag'], 301),
     ])
     @defer.inlineCallbacks
-    def test_reconfig_changed(self, name, new_desc, new_tags):
-        yield self.makeBuilder(description="Old", tags=["OldTag"])
+    def test_reconfig_changed(self, name, new_desc, new_project, new_tags, expect_project_id):
+        yield self.makeBuilder(description="Old", project='old_project', tags=["OldTag"])
         new_builder_config = config.BuilderConfig(**self.config_args)
         new_builder_config.description = new_desc
         new_builder_config.tags = new_tags
+        new_builder_config.project = new_project
 
         mastercfg = MasterConfig()
         mastercfg.builders = [new_builder_config]
 
         builder_updates = []
-        self.master.data.updates.updateBuilderInfo = \
-            lambda builderid, desc, tags: builder_updates.append((builderid, desc, tags))
+        self.master.data.updates.updateBuilderInfo = (
+            lambda builderid,
+            desc,
+            desc_format,
+            desc_html,
+            projectid,
+            tags: builder_updates.append((builderid, desc, desc_format, desc_html, projectid, tags))
+        )
 
         yield self.bldr.reconfigServiceWithBuildbotConfig(mastercfg)
-        self.assertEqual(builder_updates, [(1, new_desc, new_tags)])
+        self.assertEqual(builder_updates, [(1, new_desc, None, None, expect_project_id, new_tags)])
 
     @defer.inlineCallbacks
     def test_does_not_reconfig_identical(self):
-        yield self.makeBuilder(description="Old", tags=["OldTag"])
+        yield self.makeBuilder(description="Old", project="old_project", tags=["OldTag"])
         new_builder_config = config.BuilderConfig(**self.config_args)
 
         mastercfg = MasterConfig()
         mastercfg.builders = [new_builder_config]
 
         builder_updates = []
-        self.master.data.updates.updateBuilderInfo = \
-            lambda builderid, desc, tags: builder_updates.append((builderid, desc, tags))
+        self.master.data.updates.updateBuilderInfo = (
+            lambda builderid,
+            desc,
+            desc_format,
+            desc_html,
+            projectid,
+            tags: builder_updates.append((builderid, desc, desc_format, desc_html, projectid, tags))
+        )
 
         yield self.bldr.reconfigServiceWithBuildbotConfig(mastercfg)
         self.assertEqual(builder_updates, [])

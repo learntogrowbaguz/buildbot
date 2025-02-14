@@ -11,7 +11,9 @@
 # this program; if not, write to the Free Software Foundation, Inc., 51
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
-# Copyright Buildbot Team Members
+# Copyright Buildbot Team Member
+
+from __future__ import annotations
 
 from urllib.parse import quote_plus as urlquote_plus
 
@@ -38,23 +40,36 @@ HOSTED_BASE_URL = 'https://gitlab.com'
 
 
 class GitLabStatusPush(ReporterBase):
-    name = "GitLabStatusPush"
+    name: str | None = "GitLabStatusPush"  # type: ignore[assignment]
 
-    def checkConfig(self, token, context=None, baseURL=None, verbose=False,
-                    debug=None, verify=None, generators=None,
-                    **kwargs):
-
+    def checkConfig(
+        self,
+        token,
+        context=None,
+        baseURL=None,
+        verbose=False,
+        debug=None,
+        verify=None,
+        generators=None,
+        **kwargs,
+    ):
         if generators is None:
             generators = self._create_default_generators()
 
         super().checkConfig(generators=generators, **kwargs)
-        httpclientservice.HTTPClientService.checkAvailable(self.__class__.__name__)
 
     @defer.inlineCallbacks
-    def reconfigService(self, token, context=None, baseURL=None, verbose=False,
-                        debug=None, verify=None, generators=None,
-                        **kwargs):
-
+    def reconfigService(
+        self,
+        token,
+        context=None,
+        baseURL=None,
+        verbose=False,
+        debug=None,
+        verify=None,
+        generators=None,
+        **kwargs,
+    ):
         token = yield self.renderSecrets(token)
         self.debug = debug
         self.verify = verify
@@ -71,9 +86,13 @@ class GitLabStatusPush(ReporterBase):
         if baseURL.endswith('/'):
             baseURL = baseURL[:-1]
         self.baseURL = baseURL
-        self._http = yield httpclientservice.HTTPClientService.getService(
-            self.master, baseURL, headers={'PRIVATE-TOKEN': token},
-            debug=self.debug, verify=self.verify)
+        self._http = yield httpclientservice.HTTPSession(
+            self.master.httpservice,
+            baseURL,
+            headers={'PRIVATE-TOKEN': token},
+            debug=self.debug,
+            verify=self.verify,
+        )
         self.project_ids = {}
 
     def _create_default_generators(self):
@@ -83,13 +102,14 @@ class GitLabStatusPush(ReporterBase):
 
         return [
             BuildRequestGenerator(formatter=pending_formatter),
-            BuildStartEndStatusGenerator(start_formatter=start_formatter,
-                                         end_formatter=end_formatter)
+            BuildStartEndStatusGenerator(
+                start_formatter=start_formatter, end_formatter=end_formatter
+            ),
         ]
 
-    def createStatus(self,
-                     project_id, branch, sha, state, target_url=None,
-                     description=None, context=None):
+    def createStatus(
+        self, project_id, branch, sha, state, target_url=None, description=None, context=None
+    ):
         """
         :param project_id: Project ID from GitLab
         :param branch: Branch name to create the status for.
@@ -128,10 +148,10 @@ class GitLabStatusPush(ReporterBase):
         if project_full_name not in self.project_ids:
             response = yield self._http.get(f'/api/v4/projects/{project_full_name}')
             proj = yield response.json()
-            if response.code not in (200, ):
+            if response.code not in (200,):
                 log.msg(
-                    'Unknown (or hidden) gitlab project'
-                    f'{project_full_name}: {proj.get("message")}')
+                    f'Unknown (or hidden) gitlab project{project_full_name}: {proj.get("message")}'
+                )
                 return None
             self.project_ids[project_full_name] = proj['id']
 
@@ -155,7 +175,7 @@ class GitLabStatusPush(ReporterBase):
                 SKIPPED: 'success',
                 EXCEPTION: 'failed',
                 RETRY: 'pending',
-                CANCELLED: 'canceled'
+                CANCELLED: 'canceled',
             }.get(build['results'], 'failed')
         elif build.get('started_at'):
             state = 'running'
@@ -188,20 +208,19 @@ class GitLabStatusPush(ReporterBase):
                     state=state,
                     target_url=target_url,
                     context=context,
-                    description=description
+                    description=description,
                 )
                 if res.code not in (200, 201, 204):
                     message = yield res.json()
                     message = message.get('message', 'unspecified error')
                     log.msg(
                         f'Could not send status "{state}" for '
-                        f'{sourcestamp["repository"]} at {sha}: {message}')
+                        f'{sourcestamp["repository"]} at {sha}: {message}'
+                    )
                 elif self.verbose:
-                    log.msg(
-                        f'Status "{state}" sent for '
-                        f'{sourcestamp["repository"]} at {sha}.')
+                    log.msg(f'Status "{state}" sent for {sourcestamp["repository"]} at {sha}.')
             except Exception as e:
                 log.err(
                     e,
-                    (f'Failed to send status "{state}" for '
-                     f'{sourcestamp["repository"]} at {sha}'))
+                    (f'Failed to send status "{state}" for {sourcestamp["repository"]} at {sha}'),
+                )

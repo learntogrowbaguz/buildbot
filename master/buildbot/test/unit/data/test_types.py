@@ -12,6 +12,7 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
+from __future__ import annotations
 
 from datetime import datetime
 
@@ -21,13 +22,12 @@ from buildbot.data import types
 
 
 class TypeMixin:
-
-    klass = None
-    good = []
-    bad = []
-    stringValues = []
-    badStringValues = []
-    cmpResults = []
+    klass: type[types.Type] | None = None
+    good: list[object] = []
+    bad: list[object] = []
+    stringValues: list[tuple[str | bytes, object]] = []
+    badStringValues: list[str | bytes] = []
+    cmpResults: list[tuple[object, str | bytes, int]] = []
 
     def setUp(self):
         self.ty = self.makeInstance()
@@ -37,28 +37,29 @@ class TypeMixin:
 
     def test_valueFromString(self):
         for string, expValue in self.stringValues:
-            self.assertEqual(self.ty.valueFromString(string), expValue,
-                             f"value of string {repr(string)}")
+            self.assertEqual(
+                self.ty.valueFromString(string), expValue, f"value of string {string!r}"
+            )
         for string in self.badStringValues:
-            with self.assertRaises(Exception):
-                self.ty.valueFromString(string, f"expected error for {repr(string)}")
+            with self.assertRaises(TypeError):
+                self.ty.valueFromString(string, f"expected error for {string!r}")
 
     def test_cmp(self):
         for val, string, expResult in self.cmpResults:
-            self.assertEqual(self.ty.cmp(val, string), expResult,
-                             f"compare of {repr(val)} and {repr(string)}")
+            self.assertEqual(
+                self.ty.cmp(val, string), expResult, f"compare of {val!r} and {string!r}"
+            )
 
     def test_validate(self):
         for o in self.good:
             errors = list(self.ty.validate(repr(o), o))
-            self.assertEqual(errors, [], f"{repr(o)} -> {errors}")
+            self.assertEqual(errors, [], f"{o!r} -> {errors}")
         for o in self.bad:
             errors = list(self.ty.validate(repr(o), o))
-            self.assertNotEqual(errors, [], f"no error for {repr(o)}")
+            self.assertNotEqual(errors, [], f"no error for {o!r}")
 
 
 class NoneOk(TypeMixin, unittest.TestCase):
-
     def makeInstance(self):
         return types.NoneOk(types.Integer())
 
@@ -70,9 +71,8 @@ class NoneOk(TypeMixin, unittest.TestCase):
 
 
 class Integer(TypeMixin, unittest.TestCase):
-
     klass = types.Integer
-    good = [0, -1, 1000, 100 ** 100]
+    good = [0, -1, 1000, 100**100]
     bad = [None, '', '0']
     stringValues = [('0', 0), ('-10', -10)]
     badStringValues = ['one', '', '0x10']
@@ -80,7 +80,6 @@ class Integer(TypeMixin, unittest.TestCase):
 
 
 class DateTime(TypeMixin, unittest.TestCase):
-
     klass = types.DateTime
     good = [0, 1604843464, datetime(2020, 11, 15, 18, 40, 1, 630219)]
     bad = [int(1e60), 'bad', 1604843464.388657]
@@ -91,29 +90,26 @@ class DateTime(TypeMixin, unittest.TestCase):
 
 
 class String(TypeMixin, unittest.TestCase):
-
     klass = types.String
     good = ['', 'hello', '\N{SNOWMAN}']
     bad = [None, b'', b'hello', 10]
     stringValues = [
         (b'hello', 'hello'),
-        ('\N{SNOWMAN}'.encode('utf-8'), '\N{SNOWMAN}'),
+        ('\N{SNOWMAN}'.encode(), '\N{SNOWMAN}'),
     ]
     badStringValues = ['\xe0\xe0']
     cmpResults = [('bbb', 'aaa', 1)]
 
 
 class Binary(TypeMixin, unittest.TestCase):
-
     klass = types.Binary
-    good = [b'', b'\x01\x80\xfe', '\N{SNOWMAN}'.encode('utf-8')]
+    good = [b'', b'\x01\x80\xfe', '\N{SNOWMAN}'.encode()]
     bad = [None, 10, 'xyz']
     stringValues = [('hello', 'hello')]
     cmpResults = [('\x00\x80', '\x10\x10', -1)]
 
 
 class Boolean(TypeMixin, unittest.TestCase):
-
     klass = types.Boolean
     good = [True, False]
     bad = [None, 0, 1]
@@ -140,7 +136,6 @@ class Boolean(TypeMixin, unittest.TestCase):
 
 
 class Identifier(TypeMixin, unittest.TestCase):
-
     def makeInstance(self):
         return types.Identifier(len=5)
 
@@ -149,33 +144,29 @@ class Identifier(TypeMixin, unittest.TestCase):
     stringValues = [
         (b'abcd', 'abcd'),
     ]
-    badStringValues = [
-        b'', r'\N{SNOWMAN}', b'abcdef'
-    ]
+    badStringValues = [b'', r'\N{SNOWMAN}', b'abcdef']
     cmpResults = [
         ('aaaa', b'bbbb', -1),
     ]
 
 
 class List(TypeMixin, unittest.TestCase):
-
     def makeInstance(self):
         return types.List(of=types.Integer())
 
     good = [[], [1], [1, 2]]
     bad = [1, (1,), ['1']]
-    badStringValues = [
-        '1', '1,2'
-    ]
+    badStringValues = ['1', '1,2']
 
 
 class SourcedProperties(TypeMixin, unittest.TestCase):
-
     klass = types.SourcedProperties
 
     good = [{'p': (b'["a"]', 's')}]
     bad = [
-        None, (), [],
+        None,
+        (),
+        [],
         {b'not-unicode': ('["a"]', 'unicode')},
         {'unicode': ('["a"]', b'not-unicode')},
         {'unicode': ('not, json', 'unicode')},
@@ -183,20 +174,21 @@ class SourcedProperties(TypeMixin, unittest.TestCase):
 
 
 class Entity(TypeMixin, unittest.TestCase):
-
     class MyEntity(types.Entity):
         field1 = types.Integer()
         field2 = types.NoneOk(types.String())
 
     def makeInstance(self):
-        return self.MyEntity('myentity', 'MyEntity')
+        return self.MyEntity('myentity')
 
     good = [
         {'field1': 1, 'field2': 'f2'},
         {'field1': 1, 'field2': None},
     ]
     bad = [
-        None, [], (),
+        None,
+        [],
+        (),
         {'field1': 1},
         {'field1': 1, 'field2': 'f2', 'field3': 10},
         {'field1': 'one', 'field2': 'f2'},

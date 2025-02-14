@@ -13,7 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
@@ -29,7 +29,6 @@ from buildbot.worker import manager as workermanager
 
 @implementer(interfaces.IWorker)
 class FakeWorker(service.BuildbotService):
-
     reconfig_count = 0
 
     def __init__(self, workername):
@@ -46,11 +45,10 @@ class FakeWorker2(FakeWorker):
 
 
 class TestWorkerManager(TestReactorMixin, unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantMq=True, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantMq=True, wantData=True)
         self.master.mq = self.master.mq
         self.workers = workermanager.WorkerManager(self.master)
         yield self.workers.setServiceParent(self.master)
@@ -62,9 +60,7 @@ class TestWorkerManager(TestReactorMixin, unittest.TestCase):
 
         self.new_config = mock.Mock()
         self.workers.startService()
-
-    def tearDown(self):
-        return self.workers.stopService()
+        self.addCleanup(self.workers.stopService)
 
     @defer.inlineCallbacks
     def test_reconfigServiceWorkers_add_remove(self):
@@ -118,7 +114,6 @@ class TestWorkerManager(TestReactorMixin, unittest.TestCase):
             pass
 
         conn = mock.Mock()
-        conn.remoteGetWorkerInfo = mock.Mock(
-            return_value=defer.fail(Error()))
-        yield self.assertFailure(
-            self.workers.newConnection(conn, "worker"), Error)
+        conn.remoteGetWorkerInfo = mock.Mock(return_value=defer.fail(Error()))
+        with self.assertRaises(Error):
+            yield self.workers.newConnection(conn, "worker")

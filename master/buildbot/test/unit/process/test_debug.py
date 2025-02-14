@@ -14,7 +14,7 @@
 # Copyright Buildbot Team Members
 
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.trial import unittest
@@ -31,7 +31,6 @@ class FakeManhole(service.AsyncService):
 
 
 class TestDebugServices(TestReactorMixin, unittest.TestCase):
-
     def setUp(self):
         self.setup_test_reactor()
         self.master = mock.Mock(name='master')
@@ -39,7 +38,7 @@ class TestDebugServices(TestReactorMixin, unittest.TestCase):
 
     @defer.inlineCallbacks
     def test_reconfigService_manhole(self):
-        master = fakemaster.make_master(self)
+        master = yield fakemaster.make_master(self)
         ds = debug.DebugServices()
         yield ds.setServiceParent(master)
         yield master.startService()

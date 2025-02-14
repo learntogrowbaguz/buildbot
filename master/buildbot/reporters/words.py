@@ -1,4 +1,3 @@
-# coding: utf-8
 # This file is part of Buildbot.  Buildbot is free software: you can
 # redistribute it and/or modify it under the terms of the GNU General Public
 # License as published by the Free Software Foundation, version 2.
@@ -18,6 +17,7 @@ import random
 import re
 import shlex
 
+from twisted.application.service import Service
 from twisted.internet import defer
 from twisted.internet import protocol
 from twisted.internet import reactor
@@ -47,26 +47,110 @@ from buildbot.util import unicode2bytes
 # Used in command_HELLO and it's test. 'Hi' in 100 languages.
 
 GREETINGS = [
-    "ږغ كول ، هركلى كول ږغ، هركلى", "Goeie dag", "Tungjatjeta",
-    "Yatasay", "Ahlan bik", "Voghdzuyin", "hola", "kaixo", "Horas",
-    "Pryvitańnie", "Nomoskar", "Oki", "Selam", "Dez-mat", "Zdrávejte",
-    "Mingala ba", "Hola", "Hafa dai", "Oh-see-YOH", "Nín hao", "Bonjou",
-    "Zdravo", "Nazdar", "Hallo", "Hallo", "Iiti", "Kotáka", "Saluton", "Tere",
-    "Hallo", "Hallo", "Bula", "Helo", "Hei", "Goede morgen", "Bonjour", "Hoi",
-    "Ola", "Gamardžoba", "Guten Tag", "Mauri", "Geia!", "Inuugujoq", "Kem cho",
-    "Sannu", "Aloha", "Shalóm", "Namasté", "Szia", "Halló", "Hai", "Kiana",
-    "Dia is muire dhuit", "Buongiorno", "Kónnichi wa", "Salam",
-    "Annyeonghaseyo", "Na", "Sabai dii", "Ave", "Es mīlu tevi", "Labas.",
-    "Selamat petang", "Ni hao", "Kia ora", "Yokwe", "Kwe", "sain baina uu",
-    "niltze", "Yá'át'ééh", "Namaste", "Hallo.", "Salâm", "Witajcie", "Olá",
-    "Kâils", "Aroha", "Salut", "Privét", "Talofa", "Namo namah", "ćao",
-    "Nazdar", "Zdravo", "Hola", "Jambo", "Hej", "Sälü", "Halo", "Selam",
-    "Sàwàtdee kráp", "Dumela", "Merhaba", "Pryvít", "Adaab arz hai", "Chào",
-    "Glidis", "Helo", "Sawubona", "Hoi"]
+    "ږغ كول ، هركلى كول ږغ، هركلى",
+    "Goeie dag",
+    "Tungjatjeta",
+    "Yatasay",
+    "Ahlan bik",
+    "Voghdzuyin",
+    "hola",
+    "kaixo",
+    "Horas",
+    "Pryvitańnie",
+    "Nomoskar",
+    "Oki",
+    "Selam",
+    "Dez-mat",
+    "Zdrávejte",
+    "Mingala ba",
+    "Hola",
+    "Hafa dai",
+    "Oh-see-YOH",
+    "Nín hao",
+    "Bonjou",
+    "Zdravo",
+    "Nazdar",
+    "Hallo",
+    "Hallo",
+    "Iiti",
+    "Kotáka",
+    "Saluton",
+    "Tere",
+    "Hallo",
+    "Hallo",
+    "Bula",
+    "Helo",
+    "Hei",
+    "Goede morgen",
+    "Bonjour",
+    "Hoi",
+    "Ola",
+    "Gamardžoba",
+    "Guten Tag",
+    "Mauri",
+    "Geia!",
+    "Inuugujoq",
+    "Kem cho",
+    "Sannu",
+    "Aloha",
+    "Shalóm",
+    "Namasté",
+    "Szia",
+    "Halló",
+    "Hai",
+    "Kiana",
+    "Dia is muire dhuit",
+    "Buongiorno",
+    "Kónnichi wa",
+    "Salam",
+    "Annyeonghaseyo",
+    "Na",
+    "Sabai dii",
+    "Ave",
+    "Es mīlu tevi",
+    "Labas.",
+    "Selamat petang",
+    "Ni hao",
+    "Kia ora",
+    "Yokwe",
+    "Kwe",
+    "sain baina uu",
+    "niltze",
+    "Yá'át'ééh",
+    "Namaste",
+    "Hallo.",
+    "Salâm",
+    "Witajcie",
+    "Olá",
+    "Kâils",
+    "Aroha",
+    "Salut",
+    "Privét",
+    "Talofa",
+    "Namo namah",
+    "ćao",
+    "Nazdar",
+    "Zdravo",
+    "Hola",
+    "Jambo",
+    "Hej",
+    "Sälü",
+    "Halo",
+    "Selam",
+    "Sàwàtdee kráp",
+    "Dumela",
+    "Merhaba",
+    "Pryvít",
+    "Adaab arz hai",
+    "Chào",
+    "Glidis",
+    "Helo",
+    "Sawubona",
+    "Hoi",
+]
 
 
 class UsageError(ValueError):
-
     # pylint: disable=useless-super-delegation
     def __init__(self, string="Invalid usage", *more):
         # This is not useless as we change the default value of an argument.
@@ -84,10 +168,14 @@ class ForceOptions(usage.Options):
         ["revision", None, "HEAD", "which revision to build"],
         ["project", None, "", "which project to build"],
         ["reason", None, None, "the reason for starting the build"],
-        ["props", None, None,
-         "A set of properties made available in the build environment, "
-         "format is --properties=prop1=value1,prop2=value2,.. "
-         "option can be specified multiple times."],
+        [
+            "props",
+            None,
+            None,
+            "A set of properties made available in the build environment, "
+            "format is --properties=prop1=value1,prop2=value2,.. "
+            "option can be specified multiple times.",
+        ],
     ]
 
     def parseArgs(self, *args):
@@ -134,23 +222,27 @@ class Channel(service.AsyncService):
     def send(self, message, **kwargs):
         return self.bot.send_message(self.id, message, **kwargs)
 
+    @defer.inlineCallbacks
     def stopService(self):
         if self.subscribed:
-            self.unsubscribe_from_build_events()
+            yield self.unsubscribe_from_build_events()
 
     def validate_notification_event(self, event):
-        if not re.compile("^(started|finished|success|warnings|failure|exception|"
-                          "cancelled|problem|recovery|worse|better|worker|"
-                          # this is deprecated list
-                          "(success|warnings|failure|exception)To"
-                          "(Success|Warnings|Failure|Exception))$").match(event):
+        if not re.compile(
+            "^(started|finished|success|warnings|failure|exception|"
+            "cancelled|problem|recovery|worse|better|worker|"
+            # this is deprecated list
+            "(success|warnings|failure|exception)To"
+            "(Success|Warnings|Failure|Exception))$"
+        ).match(event):
             raise UsageError("Try '" + self.bot.commandPrefix + "notify on|off _EVENT_'.")
 
     @defer.inlineCallbacks
     def list_notified_events(self):
         if self.notify_events:
-            yield self.send('The following events are being notified: '
-                            f'{", ".join(sorted(self.notify_events))}.')
+            yield self.send(
+                f'The following events are being notified: {", ".join(sorted(self.notify_events))}.'
+            )
         else:
             yield self.send("No events are being notified.")
 
@@ -177,19 +269,23 @@ class Channel(service.AsyncService):
                 return self.workerConnected(msg)
             return None
 
-        for e, f in (("new", buildStarted),             # BuilderStarted
-                     ("finished", buildFinished)):      # BuilderFinished
+        for e, f in (
+            ("new", buildStarted),  # BuilderStarted
+            ("finished", buildFinished),
+        ):  # BuilderFinished
             handle = yield startConsuming(f, ('builders', None, 'builds', None, e))
             self.subscribed.append(handle)
 
         handle = yield startConsuming(workerEvent, ('workers', None, None))
         self.subscribed.append(handle)
 
+    @defer.inlineCallbacks
     def unsubscribe_from_build_events(self):
         # Cancel all the subscriptions we have
-        old_list, self.subscribed = self.subscribed, []
+        old_list = self.subscribed
+        self.subscribed = []
         for handle in old_list:
-            handle.stopConsuming()
+            yield handle.stopConsuming()
 
     def add_notification_events(self, events):
         for event in events:
@@ -199,19 +295,21 @@ class Channel(service.AsyncService):
         if not self.subscribed:
             self.subscribe_to_build_events()
 
+    @defer.inlineCallbacks
     def remove_notification_events(self, events):
         for event in events:
             self.validate_notification_event(event)
             self.notify_events.remove(event)
 
             if not self.notify_events:
-                self.unsubscribe_from_build_events()
+                yield self.unsubscribe_from_build_events()
 
+    @defer.inlineCallbacks
     def remove_all_notification_events(self):
         self.notify_events = set()
 
         if self.subscribed:
-            self.unsubscribe_from_build_events()
+            yield self.unsubscribe_from_build_events()
 
     def shouldReportBuild(self, builder, buildnum):
         """Returns True if this build should be reported for this contact
@@ -238,8 +336,7 @@ class Channel(service.AsyncService):
         log.msg(f"[Contact] Builder {builder['name']} started")
 
         # only notify about builders we are interested in
-        if (self.bot.tags is not None and
-                not self.builderMatchesAnyTag(builder.get('tags', []))):
+        if self.bot.tags is not None and not self.builderMatchesAnyTag(builder.get('tags', [])):
             log.msg('Not notifying for a build that does not match any tags')
             return
 
@@ -270,8 +367,7 @@ class Channel(service.AsyncService):
         buildNumber = build['number']
 
         # only notify about builders we are interested in
-        if (self.bot.tags is not None and
-                not self.bot.builderMatchesAnyTag(builder.get('tags', []))):
+        if self.bot.tags is not None and not self.bot.builderMatchesAnyTag(builder.get('tags', [])):
             log.msg('Not notifying for a build that does not match any tags')
             return
 
@@ -285,12 +381,16 @@ class Channel(service.AsyncService):
 
         if self.useRevisions:
             revisions = yield self.getRevisionsForBuild(build)
-            r = (f"Build on `{builderName}` containing revision(s) {','.join(revisions)} "
-                 f"{self.bot.format_build_status(build)}")
+            r = (
+                f"Build on `{builderName}` containing revision(s) {','.join(revisions)} "
+                f"{self.bot.format_build_status(build)}"
+            )
         else:
-            r = (f"Build [#{buildNumber}]({url}) of `{builderName}` "
-                 f"{self.bot.format_build_status(build)}")
-        s = build.get('status_string')
+            r = (
+                f"Build [#{buildNumber}]({url}) of `{builderName}` "
+                f"{self.bot.format_build_status(build)}"
+            )
+        s = build.get('status_string') or build.get('state_string')
         if build['results'] != SUCCESS and s is not None:
             r += ": " + s
         else:
@@ -311,39 +411,47 @@ class Channel(service.AsyncService):
         if self.notify_for(result_name):
             return True
 
-        if result in self.bot.results_severity and \
-                (self.notify_for('better', 'worse', 'problem', 'recovery') or
-                 any('To' in e for e in self.notify_events)):
-            prev_build = yield self.master.data.get(
-                ('builders', build['builderid'], 'builds', build['number'] - 1))
+        if result in self.bot.results_severity and (
+            self.notify_for('better', 'worse', 'problem', 'recovery')
+            or any('To' in e for e in self.notify_events)
+        ):
+            prev_build = yield self.master.data.get((
+                'builders',
+                build['builderid'],
+                'builds',
+                build['number'] - 1,
+            ))
             if prev_build:
                 prev_result = prev_build['results']
 
                 if prev_result in self.bot.results_severity:
                     result_severity = self.bot.results_severity.index(result)
                     prev_result_severity = self.bot.results_severity.index(prev_result)
-                    if self.notify_for('better') and \
-                            result_severity < prev_result_severity:
+                    if self.notify_for('better') and result_severity < prev_result_severity:
                         return True
-                    if self.notify_for('worse') and \
-                            result_severity > prev_result_severity:
+                    if self.notify_for('worse') and result_severity > prev_result_severity:
                         return True
 
-                    if self.notify_for('problem') \
-                            and prev_result in (SUCCESS, WARNINGS) \
-                            and result in (FAILURE, EXCEPTION):
+                    if (
+                        self.notify_for('problem')
+                        and prev_result in (SUCCESS, WARNINGS)
+                        and result in (FAILURE, EXCEPTION)
+                    ):
                         return True
 
-                    if self.notify_for('recovery') \
-                            and prev_result in (FAILURE, EXCEPTION) \
-                            and result in (SUCCESS, WARNINGS):
+                    if (
+                        self.notify_for('recovery')
+                        and prev_result in (FAILURE, EXCEPTION)
+                        and result in (SUCCESS, WARNINGS)
+                    ):
                         return True
 
                     # DEPRECATED
-                    required_notification_control_string = ''.join(
-                        (statusToString(prev_result).lower(),
-                         'To',
-                         result_name.capitalize()))
+                    required_notification_control_string = ''.join((
+                        statusToString(prev_result).lower(),
+                        'To',
+                        result_name.capitalize(),
+                    ))
                     if self.notify_for(required_notification_control_string):
                         return True
 
@@ -353,8 +461,10 @@ class Channel(service.AsyncService):
     def workerMissing(self, worker):
         self.missing_workers.add(worker['workerid'])
         if self.notify_for('worker'):
-            self.send(f"Worker `{worker['name']}` is missing. It was seen last on "
-                      f"{worker['last_connection']}.")
+            self.send(
+                f"Worker `{worker['name']}` is missing. It was seen last on "
+                f"{worker['last_connection']}."
+            )
         yield self.bot.saveMissingWorkers()
 
     @defer.inlineCallbacks
@@ -450,17 +560,17 @@ class Contact:
         message = message.lstrip()
         parts = message.split(' ', 1)
         if len(parts) == 1:
-            parts = parts + ['']
+            parts = [*parts, ""]
         cmd, args = parts
 
         cmd_suffix = self.bot.commandSuffix
         if cmd_suffix and cmd.endswith(cmd_suffix):
-            cmd = cmd[:-len(cmd_suffix)]
+            cmd = cmd[: -len(cmd_suffix)]
 
         self.bot.log(f"Received command `{cmd}` from {self.describeUser()}")
 
         if cmd.startswith(self.bot.commandPrefix):
-            meth = self.getCommandMethod(cmd[len(self.bot.commandPrefix):])
+            meth = self.getCommandMethod(cmd[len(self.bot.commandPrefix) :])
         else:
             meth = None
 
@@ -521,8 +631,9 @@ class Contact:
             pass
 
         if not args:
-            raise UsageError("Try "
-                             f"'{self.bot.commandPrefix}list [all|N] builders|workers|changes'.")
+            raise UsageError(
+                f"Try '{self.bot.commandPrefix}list [all|N] builders|workers|changes'."
+            )
 
         if args[0] == 'builders':
             bdicts = yield self.bot.getAllBuilders()
@@ -553,10 +664,12 @@ class Contact:
 
         elif args[0] == 'changes':
             if all:
-                self.send("Do you really want me to list all changes? It can be thousands!\n"
-                          "If you want to be flooded, specify the maximum number of changes "
-                          "to show.\n"
-                          "Right now, I will show up to 100 recent changes.")
+                self.send(
+                    "Do you really want me to list all changes? It can be thousands!\n"
+                    "If you want to be flooded, specify the maximum number of changes "
+                    "to show.\n"
+                    "Right now, I will show up to 100 recent changes."
+                )
                 num = 100
             changes = yield self.master.data.get(('changes',), order=['-changeid'], limit=num)
 
@@ -570,11 +683,14 @@ class Contact:
                     f"Date: {change['date']}\n"
                     f"Repository: {change['repository']}\n"
                     f"Branch: {change['branch']}\n"
-                    f"Revision: {change['revision']}\n")
+                    f"Revision: {change['revision']}\n"
+                )
             self.send('\n\n'.join(response))
 
-    command_LIST.usage = "list [all|N] builders|workers|changes - " \
-                         "list configured builders, workers, or N recent changes"
+    command_LIST.usage = (  # type: ignore[attr-defined]
+        "list [all|N] builders|workers|changes - "
+        "list configured builders, workers, or N recent changes"
+    )
 
     @defer.inlineCallbacks
     def command_STATUS(self, args, **kwargs):
@@ -604,7 +720,8 @@ class Contact:
             response.append(status)
         if response:
             self.send('\n'.join(response))
-    command_STATUS.usage = "status [_which_] - list status of a builder (or all builders)"
+
+    command_STATUS.usage = "status [_which_] - list status of a builder (or all builders)"  # type: ignore[attr-defined]
 
     @defer.inlineCallbacks
     def command_NOTIFY(self, args, **kwargs):
@@ -627,9 +744,9 @@ class Contact:
 
         elif action in ("off", "off-quiet"):
             if events:
-                self.channel.remove_notification_events(events)
+                yield self.channel.remove_notification_events(events)
             else:
-                self.channel.remove_all_notification_events()
+                yield self.channel.remove_all_notification_events()
 
             if action == "off":
                 yield self.channel.list_notified_events()
@@ -641,9 +758,11 @@ class Contact:
         else:
             raise UsageError("Try '" + self.bot.commandPrefix + "notify on|off|list [_EVENT_]'.")
 
-    command_NOTIFY.usage = ("notify on|off|list [_EVENT_] ... - notify me about build events;"
-                            "  event should be one or more of: 'started', 'finished', 'failure',"
-                            " 'success', 'exception', 'problem', 'recovery', 'better', or 'worse'")
+    command_NOTIFY.usage = (  # type: ignore[attr-defined]
+        "notify on|off|list [_EVENT_] ... - notify me about build events;"
+        "  event should be one or more of: 'started', 'finished', 'failure',"
+        " 'success', 'exception', 'problem', 'recovery', 'better', or 'worse'"
+    )
 
     @defer.inlineCallbacks
     def command_WATCH(self, args, **kwargs):
@@ -669,21 +788,24 @@ class Contact:
         for build in builds:
             startConsuming = self.master.mq.startConsuming
             handle = yield startConsuming(
-                watchForCompleteEvent,
-                ('builds', str(build['buildid']), None))
+                watchForCompleteEvent, ('builds', str(build['buildid']), None)
+            )
             self.channel.build_subscriptions.append((build['buildid'], handle))
 
             url = utils.getURLForBuild(self.master, builder['builderid'], build['number'])
 
             if self.bot.useRevisions:
                 revisions = yield self.bot.getRevisionsForBuild(build)
-                r = (f"Watching build on `{which}` containing revision(s) "
-                     f"{','.join(revisions)} until it finishes...")
+                r = (
+                    f"Watching build on `{which}` containing revision(s) "
+                    f"{','.join(revisions)} until it finishes..."
+                )
             else:
                 r = f"Watching build [#{build['number']}]({url}) of `{which}` until it finishes..."
 
             self.send(r)
-    command_WATCH.usage = "watch _which_ - announce the completion of an active build"
+
+    command_WATCH.usage = "watch _which_ - announce the completion of an active build"  # type: ignore[attr-defined]
 
     @defer.inlineCallbacks
     @dangerousCommand
@@ -740,8 +862,7 @@ class Contact:
 
             # set properties
             for pname, pvalue in pdict.items():
-                if not pname_validate.match(pname) \
-                        or not pval_validate.match(pvalue):
+                if not pname_validate.match(pname) or not pval_validate.match(pvalue):
                     self.bot.log(f"Force: bad property name='{pname}', value='{pvalue}'")
                     self.send(f"Sorry, bad property name='{pname}', value='{pvalue}'")
                     return
@@ -752,25 +873,34 @@ class Contact:
 
         reason = f"forced: by {self.describeUser()}: {reason}"
         try:
-            yield self.master.data.updates.addBuildset(builderids=[builder['builderid']],
-                                                       # For now, we just use
-                                                       # this as the id.
-                                                       scheduler="status.words",
-                                                       sourcestamps=[{
-                                                           'codebase': codebase, 'branch': branch,
-                                                           'revision': revision, 'project': project,
-                                                           'repository': ""}],
-                                                       reason=reason,
-                                                       properties=properties.asDict(),
-                                                       waited_for=False)
+            yield self.master.data.updates.addBuildset(
+                builderids=[builder['builderid']],
+                # For now, we just use
+                # this as the id.
+                scheduler="status.words",
+                sourcestamps=[
+                    {
+                        'codebase': codebase,
+                        'branch': branch,
+                        'revision': revision,
+                        'project': project,
+                        'repository': "",
+                    }
+                ],
+                reason=reason,
+                properties=properties.asDict(),
+                waited_for=False,
+            )
         except AssertionError as e:
             self.send("I can't: " + str(e))
         else:
             self.send("Force build successfully requested.")
 
-    command_FORCE.usage = ("force build [--codebase=CODEBASE] [--branch=branch] "
-                           "[--revision=revision] [--props=prop1=val1,prop2=val2...] "
-                           "_which_ _reason_ - Force a build")
+    command_FORCE.usage = (  # type: ignore[attr-defined]
+        "force build [--codebase=CODEBASE] [--branch=branch] "
+        "[--revision=revision] [--props=prop1=val1,prop2=val2...] "
+        "_which_ _reason_ - Force a build"
+    )
 
     @defer.inlineCallbacks
     @dangerousCommand
@@ -796,8 +926,9 @@ class Contact:
         for bdict in builds:
             num = bdict['number']
 
-            yield self.master.data.control('stop', {'reason': r},
-                                           ('builders', builderid, 'builds', num))
+            yield self.master.data.control(
+                'stop', {'reason': r}, ('builders', builderid, 'builds', num)
+            )
             if self.bot.useRevisions:
                 revisions = yield self.bot.getRevisionsForBuild(bdict)
                 response = f"Build containing revision(s) {','.join(revisions)} interrupted"
@@ -806,7 +937,7 @@ class Contact:
                 response = f"Build [#{num}]({url}) of `{which}` interrupted."
             self.send(response)
 
-    command_STOP.usage = "stop build _which_ _reason_ - Stop a running build"
+    command_STOP.usage = "stop build _which_ _reason_ - Stop a running build"  # type: ignore[attr-defined]
 
     @defer.inlineCallbacks
     def command_LAST(self, args, **kwargs):
@@ -840,8 +971,7 @@ class Contact:
                 complete_at = lastBuild['complete_at']
                 if complete_at:
                     complete_at = util.datetime2epoch(complete_at)
-                    ago = util.fuzzyInterval(int(reactor.seconds() -
-                                                 complete_at))
+                    ago = util.fuzzyInterval(int(reactor.seconds() - complete_at))
                 else:
                     ago = "??"
                 status = self.bot.format_build_status(lastBuild)
@@ -852,7 +982,7 @@ class Contact:
         if messages:
             self.send('\n'.join(messages))
 
-    command_LAST.usage = "last [_which_] - list last build status for builder _which_"
+    command_LAST.usage = "last [_which_] - list last build status for builder _which_"  # type: ignore[attr-defined]
 
     @classmethod
     def build_commands(cls):
@@ -886,7 +1016,7 @@ class Contact:
             return
         command = args[0]
         if command.startswith(self.bot.commandPrefix):
-            command = command[len(self.bot.commandPrefix):]
+            command = command[len(self.bot.commandPrefix) :]
         meth = getattr(self, 'command_' + command.upper(), None)
         if not meth:
             raise UsageError(f"There is no such command '{args[0]}'.")
@@ -907,23 +1037,25 @@ class Contact:
         if doc:
             self.send(f"Usage: {self.bot.commandPrefix}{doc}")
         else:
-            self.send(
-                "No usage info for " + ' '.join([f"'{arg}'" for arg in args]))
-    command_HELP.usage = ("help [_command_ _arg_ [_subarg_ ...]] - "
-                          "Give help for _command_ or one of it's arguments")
+            self.send("No usage info for " + ' '.join([f"'{arg}'" for arg in args]))
+
+    command_HELP.usage = (  # type: ignore[attr-defined]
+        "help [_command_ _arg_ [_subarg_ ...]] - Give help for _command_ or one of it's arguments"
+    )
 
     def command_SOURCE(self, args, **kwargs):
         "the source code for buildbot"
-        self.send("My source can be found at "
-                  "https://github.com/buildbot/buildbot")
-    command_SOURCE.usage = "source - the source code for Buildbot"
+        self.send("My source can be found at https://github.com/buildbot/buildbot")
+
+    command_SOURCE.usage = "source - the source code for Buildbot"  # type: ignore[attr-defined]
 
     def command_COMMANDS(self, args, **kwargs):
         """list available commands"""
         commands = self.build_commands()
         str = "Buildbot commands: " + ", ".join(self.bot.commandPrefix + c for c in commands)
         self.send(str)
-    command_COMMANDS.usage = "commands - List available commands"
+
+    command_COMMANDS.usage = "commands - List available commands"  # type: ignore[attr-defined]
 
     @dangerousCommand
     def command_SHUTDOWN(self, args, **kwargs):
@@ -955,16 +1087,18 @@ class Contact:
         elif args == 'now':
             self.send("Stopping buildbot.")
             reactor.stop()
+
     command_SHUTDOWN.usage = {
         None: "shutdown check|start|stop|now - shutdown the buildbot master",
         "check": "shutdown check - check if the buildbot master is running or shutting down",
         "start": "shutdown start - start a clean shutdown",
         "stop": "shutdown cancel - stop the clean shutdown",
-        "now": "shutdown now - shutdown immediately without waiting for the builders to finish"}
+        "now": "shutdown now - shutdown immediately without waiting for the builders to finish",
+    }
 
 
 class StatusBot(service.AsyncMultiService):
-    """ Abstract status bot """
+    """Abstract status bot"""
 
     contactClass = Contact
     channelClass = Channel
@@ -975,9 +1109,12 @@ class StatusBot(service.AsyncMultiService):
     offline_string = "offline"
     idle_string = "idle"
     running_string = "running:"
+    nickname: str
+    parent: Service  # type: ignore[assignment]
 
-    def __init__(self, authz=None, tags=None, notify_events=None,
-                 useRevisions=False, showBlameList=False):
+    def __init__(
+        self, authz=None, tags=None, notify_events=None, useRevisions=False, showBlameList=False
+    ):
         super().__init__()
         self.tags = tags
         if notify_events is None:
@@ -1003,21 +1140,18 @@ class StatusBot(service.AsyncMultiService):
 
     def isValidUser(self, user):
         for auth in self.authz.values():
-            if auth is True \
-                    or (isinstance(auth, (list, tuple)) and user in auth)\
-                    or user == auth:
+            if auth is True or (isinstance(auth, (list, tuple)) and user in auth) or user == auth:
                 return True
         # If user is in '', we have already returned; otherwise check if defaults apply
         return '' not in self.authz
 
     def getContact(self, user, channel):
-        """ get a Contact instance for ``user`` on ``channel`` """
+        """get a Contact instance for ``user`` on ``channel``"""
         try:
             return self.contacts[(channel, user)]
         except KeyError:
             valid = self.isValidUser(user)
-            new_contact = self.contactClass(user=user,
-                                            channel=self.getChannel(channel, valid))
+            new_contact = self.contactClass(user=user, channel=self.getChannel(channel, valid))
             if valid:
                 self.contacts[(channel, user)] = new_contact
             return new_contact
@@ -1034,14 +1168,21 @@ class StatusBot(service.AsyncMultiService):
 
     def _get_object_id(self):
         return self.master.db.state.getObjectId(
-            self.nickname, f'{self.__class__.__module__}.{self.__class__.__name__}')
+            self.nickname, f'{self.__class__.__module__}.{self.__class__.__name__}'
+        )
 
     @defer.inlineCallbacks
     def _save_channels_state(self, attr, json_type=None):
         if json_type is None:
             json_type = lambda x: x
-        data = [(k, v) for k, v in ((channel.id, json_type(getattr(channel, attr)))
-                                    for channel in self.channels.values()) if v]
+        data = [
+            (k, v)
+            for k, v in (
+                (channel.id, json_type(getattr(channel, attr)))
+                for channel in self.channels.values()
+            )
+            if v
+        ]
         try:
             objectid = yield self._get_object_id()
             yield self.master.db.state.setState(objectid, attr, data)
@@ -1099,17 +1240,25 @@ class StatusBot(service.AsyncMultiService):
         return any(tag for tag in builder_tags if tag in self.tags)
 
     def getRunningBuilds(self, builderid):
-        d = self.master.data.get(('builds',),
-                                 filters=[resultspec.Filter('builderid', 'eq', [builderid]),
-                                          resultspec.Filter('complete', 'eq', [False])])
+        d = self.master.data.get(
+            ('builds',),
+            filters=[
+                resultspec.Filter('builderid', 'eq', [builderid]),
+                resultspec.Filter('complete', 'eq', [False]),
+            ],
+        )
         return d
 
     def getLastCompletedBuild(self, builderid):
-        d = self.master.data.get(('builds',),
-                                 filters=[resultspec.Filter('builderid', 'eq', [builderid]),
-                                          resultspec.Filter('complete', 'eq', [True])],
-                                 order=['-number'],
-                                 limit=1)
+        d = self.master.data.get(
+            ('builds',),
+            filters=[
+                resultspec.Filter('builderid', 'eq', [builderid]),
+                resultspec.Filter('complete', 'eq', [True]),
+            ],
+            order=['-number'],
+            limit=1,
+        )
 
         @d.addCallback
         def listAsOneOrNone(res):
@@ -1120,11 +1269,12 @@ class StatusBot(service.AsyncMultiService):
         return d
 
     def getCurrentBuildstep(self, build):
-        d = self.master.data.get(('builds', build['buildid'], 'steps'),
-                                 filters=[
-                                     resultspec.Filter('complete', 'eq', [False])],
-                                 order=['number'],
-                                 limit=1)
+        d = self.master.data.get(
+            ('builds', build['buildid'], 'steps'),
+            filters=[resultspec.Filter('complete', 'eq', [False])],
+            order=['number'],
+            limit=1,
+        )
         return d
 
     @defer.inlineCallbacks
@@ -1145,8 +1295,7 @@ class StatusBot(service.AsyncMultiService):
                     complete_at = lastBuild['complete_at']
                     if complete_at:
                         complete_at = util.datetime2epoch(complete_at)
-                        ago = util.fuzzyInterval(int(reactor.seconds() -
-                                                     complete_at))
+                        ago = util.fuzzyInterval(int(reactor.seconds() - complete_at))
                     else:
                         ago = "??"
                     status = self.format_build_status(lastBuild, short=short)
@@ -1179,9 +1328,9 @@ class StatusBot(service.AsyncMultiService):
     @defer.inlineCallbacks
     def getBuilder(self, buildername=None, builderid=None):
         if buildername:
-            bdicts = yield self.master.data.get(('builders',),
-                                                filters=[resultspec.Filter('name', 'eq',
-                                                                           [buildername])])
+            bdicts = yield self.master.data.get(
+                ('builders',), filters=[resultspec.Filter('name', 'eq', [buildername])]
+            )
             if bdicts:
                 # Could there be more than one? One is enough.
                 bdict = bdicts[0]
@@ -1233,12 +1382,10 @@ class StatusBot(service.AsyncMultiService):
         CANCELLED: "was cancelled",
     }
 
-    results_severity = (
-        SKIPPED, SUCCESS, WARNINGS, FAILURE, CANCELLED, EXCEPTION
-    )
+    results_severity = (SKIPPED, SUCCESS, WARNINGS, FAILURE, CANCELLED, EXCEPTION)
 
     def format_build_status(self, build, short=False):
-        """ Optionally add color to the message """
+        """Optionally add color to the message"""
         return self.results_descriptions[build['results']]
 
 

@@ -25,7 +25,6 @@ def ident(x):
 
 
 class Matcher:
-
     def __init__(self):
         self._patterns = {}
         self._dirty = True
@@ -36,10 +35,10 @@ class Matcher:
         self._dirty = True
 
     def __repr__(self):
-        return f'<Matcher {repr(self._patterns)}>'
+        return f'<Matcher {self._patterns!r}>'
 
     path_elt_re = re.compile('^(.?):([a-z0-9_.]+)$')
-    type_fns = dict(n=int, i=ident)
+    type_fns = {"n": int, "i": ident, "s": str}
 
     def __getitem__(self, path):
         if self._dirty:
@@ -68,7 +67,7 @@ class Matcher:
             else:
                 # complete match
                 return patterns[pattern], kwargs
-        raise KeyError(f'No match for {repr(path)}')
+        raise KeyError(f'No match for {path!r}')
 
     def iterPatterns(self):
         return list(self._patterns.items())

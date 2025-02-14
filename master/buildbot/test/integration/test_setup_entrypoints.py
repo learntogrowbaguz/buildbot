@@ -17,10 +17,10 @@
 import importlib
 import inspect
 import os
-import pkg_resources
 import warnings
 
 import twisted
+from packaging.version import parse as parse_version
 from twisted.trial import unittest
 from twisted.trial.unittest import SkipTest
 from zope.interface.verify import verifyClass
@@ -51,7 +51,9 @@ def get_python_module_contents(package_name):
             if dir_entry.is_file() and filename.endswith('.py'):
                 result.add(next_package_name)
 
-            if dir_entry.is_dir():
+            if dir_entry.is_dir() and not filename.startswith('.'):
+                # Ignore hidden directories added by various tooling an user may have, e.g.
+                # .ropeproject
                 result.add(next_package_name)
                 result |= get_python_module_contents(next_package_name)
 
@@ -65,11 +67,11 @@ class TestSetupPyEntryPoints(unittest.TestCase):
         known_not_exported = {
             'buildbot.changes.gerritchangesource.GerritChangeSourceBase',
             'buildbot.changes.base.ReconfigurablePollingChangeSource',
-            'buildbot.changes.base.PollingChangeSource',
             'buildbot.changes.base.ChangeSource',
         }
-        self.verify_plugins_registered('changes', 'buildbot.changes', IChangeSource,
-                                       known_not_exported)
+        self.verify_plugins_registered(
+            'changes', 'buildbot.changes', IChangeSource, known_not_exported
+        )
 
     def test_schedulers(self):
         known_not_exported = {
@@ -77,18 +79,19 @@ class TestSetupPyEntryPoints(unittest.TestCase):
             'buildbot.schedulers.timed.Timed',
             'buildbot.schedulers.trysched.TryBase',
             'buildbot.schedulers.base.BaseScheduler',
+            'buildbot.schedulers.base.ReconfigurableBaseScheduler',
             'buildbot.schedulers.timed.NightlyBase',
             'buildbot.schedulers.basic.Scheduler',
         }
-        self.verify_plugins_registered('schedulers', 'buildbot.schedulers', IScheduler,
-                                       known_not_exported)
+        self.verify_plugins_registered(
+            'schedulers', 'buildbot.schedulers', IScheduler, known_not_exported
+        )
 
     def test_steps(self):
         known_not_exported = {
             'buildbot.steps.download_secret_to_worker.RemoveWorkerFileSecret',
             'buildbot.steps.source.base.Source',
             'buildbot.steps.download_secret_to_worker.DownloadSecretsToWorker',
-            'buildbot.steps.shell.SetProperty',
             'buildbot.steps.worker.WorkerBuildStep',
             'buildbot.steps.vstudio.VisualStudio',
         }
@@ -96,7 +99,7 @@ class TestSetupPyEntryPoints(unittest.TestCase):
 
     def test_util(self):
         # work around Twisted bug 9384.
-        if pkg_resources.parse_version(twisted.__version__) < pkg_resources.parse_version("18.9.0"):
+        if parse_version(twisted.__version__) < parse_version("18.9.0"):
             raise SkipTest('manhole.py can not be imported on old twisted and new python')
 
         known_not_exported = {
@@ -108,18 +111,22 @@ class TestSetupPyEntryPoints(unittest.TestCase):
             'buildbot.util.bbcollections.KeyedSets',
             'buildbot.util.codebase.AbsoluteSourceStampsMixin',
             'buildbot.util.config.ConfiguredMixin',
-            'buildbot.util.croniter.croniter',
             'buildbot.util.debounce.Debouncer',
             'buildbot.util.deferwaiter.DeferWaiter',
+            "buildbot.util.deferwaiter.NonRepeatedActionHandler",
             'buildbot.util.deferwaiter.RepeatedActionHandler',
             'buildbot.util.git.GitMixin',
             'buildbot.util.git.GitStepMixin',
+            'buildbot.util.git.GitServiceAuth',
+            'buildbot.util.git.AbstractGitAuth',
+            'buildbot.util.git.GitStepAuth',
             'buildbot.util.giturlparse.GitUrl',
             'buildbot.util.httpclientservice.HTTPClientService',
+            'buildbot.util.httpclientservice.HTTPSession',
+            'buildbot.util.httpclientservice.TreqResponseWrapper',
             'buildbot.util.httpclientservice.TxRequestsResponseWrapper',
             'buildbot.util.kubeclientservice.KubeClientService',
             'buildbot.util.kubeclientservice.KubeConfigLoaderBase',
-            'buildbot.util.kubeclientservice.KubeError',
             'buildbot.util.latent.CompatibleLatentWorkerMixin',
             'buildbot.util.lineboundaries.LineBoundaryFinder',
             'buildbot.util.lru.AsyncLRUCache',
@@ -147,6 +154,7 @@ class TestSetupPyEntryPoints(unittest.TestCase):
             'buildbot.util.service.BuildbotService',
             'buildbot.util.service.BuildbotServiceManager',
             'buildbot.util.service.ClusteredBuildbotService',
+            'buildbot.util.service.IndependentAsyncMultiService',
             'buildbot.util.service.MasterService',
             'buildbot.util.service.ReconfigurableServiceMixin',
             'buildbot.util.service.SharedService',
@@ -154,6 +162,8 @@ class TestSetupPyEntryPoints(unittest.TestCase):
             'buildbot.util.subscription.Subscription',
             'buildbot.util.subscription.SubscriptionPoint',
             'buildbot.util.test_result_submitter.TestResultSubmitter',
+            "buildbot.util.watchdog.Watchdog",
+            "buildbot.util.twisted.ThreadPool",
         }
         self.verify_plugins_registered('util', 'buildbot.util', None, known_not_exported)
 
@@ -163,6 +173,10 @@ class TestSetupPyEntryPoints(unittest.TestCase):
             'buildbot.reporters.generators.utils.BuildStatusGeneratorMixin',
             'buildbot.reporters.gerrit.DEFAULT_REVIEW',
             'buildbot.reporters.gerrit.DEFAULT_SUMMARY',
+            'buildbot.reporters.gerrit.GerritBuildEndStatusGenerator',
+            'buildbot.reporters.gerrit.GerritBuildSetStatusGenerator',
+            'buildbot.reporters.gerrit.GerritBuildStartStatusGenerator',
+            'buildbot.reporters.gerrit.GerritStatusGeneratorBase',
             'buildbot.reporters.irc.IRCChannel',
             'buildbot.reporters.irc.IRCContact',
             'buildbot.reporters.irc.IrcStatusBot',
@@ -211,16 +225,18 @@ class TestSetupPyEntryPoints(unittest.TestCase):
         }
         self.verify_plugins_registered('worker', 'buildbot.worker', IWorker, known_not_exported)
 
-    def verify_plugins_registered(self, plugin_type, module_name, interface,
-                                  known_not_exported=None):
+    def verify_plugins_registered(
+        self, plugin_type, module_name, interface, known_not_exported=None
+    ):
         # This will verify whether we can load plugins, i.e. whether the entry points are valid.
         plugins = get_plugins(plugin_type, interface, load_now=True)
 
         # Now verify that are no unregistered plugins left.
         existing_classes = self.get_existing_classes(module_name, interface)
 
-        exported_classes = {f'{plugins._get_entry(name)._entry.module_name}.{name}'
-                            for name in plugins.names}
+        exported_classes = {
+            f'{plugins._get_entry(name)._entry.module}.{name}' for name in plugins.names
+        }
         if known_not_exported is None:
             known_not_exported = set()
 

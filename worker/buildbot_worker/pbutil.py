@@ -14,15 +14,13 @@
 # Copyright Buildbot Team Members
 
 
-"""Base classes handy for use with PB clients.
-"""
+"""Base classes handy for use with PB clients."""
 
-from __future__ import absolute_import
-from __future__ import print_function
-from future.utils import iteritems
-
+from twisted.application.internet import backoffPolicy
 from twisted.cred import error
+from twisted.internet import defer
 from twisted.internet import reactor
+from twisted.internet import task
 from twisted.python import log
 from twisted.spread import pb
 from twisted.spread.pb import PBClientFactory
@@ -51,9 +49,24 @@ class AutoLoginPBFactory(PBClientFactory):
     invoked.
     """
 
-    def clientConnectionMade(self, broker):
+    def __init__(  # pylint: disable=wrong-spelling-in-docstring
+        self, retryPolicy=None, **kwargs
+    ):
+        """
+        @param retryPolicy: A policy configuring how long L{AutoLoginPBFactory} will
+            wait between attempts to connect to C{endpoint}.
+        @type retryPolicy: callable taking (the number of failed connection
+            attempts made in a row (L{int})) and returning the number of
+            seconds to wait before making another attempt.
+        """
+        PBClientFactory.__init__(self, **kwargs)
+        self._timeoutForAttempt = backoffPolicy() if retryPolicy is None else retryPolicy
+        self._failedAttempts = 0
+        self._login_d = None
+
+    def clientConnectionMade(self, broker, retryPolicy=None):
         PBClientFactory.clientConnectionMade(self, broker)
-        self.doLogin(self._root, broker)
+        self._login_d = self.doLogin(self._root, broker)
         self.gotRootObject(self._root)
 
     def login(self, *args):
@@ -64,11 +77,16 @@ class AutoLoginPBFactory(PBClientFactory):
         self._client = client
 
     def doLogin(self, root, broker):
-        d = self._cbSendUsername(root, self._credentials.username,
-                                 self._credentials.password, self._client)
-        d.addCallbacks(self.gotPerspective, self.failedToGetPerspective,
-                       errbackArgs=(broker,))
+        d = self._cbSendUsername(
+            root, self._credentials.username, self._credentials.password, self._client
+        )
+        d.addCallbacks(self.gotPerspective, self.failedToGetPerspective, errbackArgs=(broker,))
         return d
+
+    def stopFactory(self):
+        if self._login_d:
+            self._login_d.cancel()
+        PBClientFactory.stopFactory(self)
 
     # methods to override
 
@@ -81,6 +99,7 @@ class AutoLoginPBFactory(PBClientFactory):
         is now available. This method will be called each time the connection
         is established and the object reference is retrieved."""
 
+    @defer.inlineCallbacks
     def failedToGetPerspective(self, why, broker):
         """The login process failed, most likely because of an authorization
         failure (bad password), but it is also possible that we lost the new
@@ -99,6 +118,16 @@ class AutoLoginPBFactory(PBClientFactory):
             reactor.stop()
             return
 
+        self._failedAttempts += 1
+        delay = self._timeoutForAttempt(self._failedAttempts)
+        log.msg(f"Scheduling retry {self._failedAttempts} to getPerspective in {delay} seconds.")
+
+        # Delay the retry according to the backoff policy
+        try:
+            yield task.deferLater(reactor, delay, lambda: None)
+        except defer.CancelledError:
+            pass
+
         # lose the current connection, which will trigger a retry
         broker.transport.loseConnection()
 
@@ -114,6 +143,6 @@ def decode(data, encoding='utf-8', errors='strict'):
         return bytes2unicode(data, encoding, errors)
     if data_type in (dict, list, tuple):
         if data_type == dict:
-            data = iteritems(data)
+            data = data.items()
         return data_type(map(decode, data))
     return data

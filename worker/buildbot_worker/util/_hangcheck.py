@@ -7,9 +7,6 @@ server, neither side will talk, leading to a hung connection. This
 wrapper will disconnect in that case, and inform the caller.
 """
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 from twisted.internet.interfaces import IProtocol
 from twisted.internet.interfaces import IProtocolFactory
 from twisted.python.components import proxyForInterface
@@ -20,12 +17,13 @@ def _noop():
 
 
 class HangCheckProtocol(
-    proxyForInterface(IProtocol, '_wrapped_protocol'), object,
+    proxyForInterface(IProtocol, '_wrapped_protocol'),  # type: ignore[misc]
 ):
     """
     Wrap a protocol, so the underlying connection will disconnect if
     the other end doesn't send data within a given timeout.
     """
+
     transport = None
     _hungConnectionTimer = None
 
@@ -52,27 +50,30 @@ class HangCheckProtocol(
         # because we only care about noticing data received, not
         # sent.
         self.transport = transport
-        super(HangCheckProtocol, self).makeConnection(transport)
+        super().makeConnection(transport)
         self._startHungConnectionTimer()
 
     def dataReceived(self, data):
         self._stopHungConnectionTimer()
-        super(HangCheckProtocol, self).dataReceived(data)
+        super().dataReceived(data)
 
     def connectionLost(self, reason):
         self._stopHungConnectionTimer()
-        super(HangCheckProtocol, self).connectionLost(reason)
+        super().connectionLost(reason)
 
     def _startHungConnectionTimer(self):
         """
         Start a timer to detect if the connection is hung.
         """
+
         def hungConnection():
             self._hung_callback()
             self._hungConnectionTimer = None
             self.transport.loseConnection()
+
         self._hungConnectionTimer = self._reactor.callLater(
-            self._HUNG_CONNECTION_TIMEOUT, hungConnection)
+            self._HUNG_CONNECTION_TIMEOUT, hungConnection
+        )
 
     def _stopHungConnectionTimer(self):
         """
@@ -85,7 +86,7 @@ class HangCheckProtocol(
 
 
 class HangCheckFactory(
-    proxyForInterface(IProtocolFactory, '_wrapped_factory'), object,
+    proxyForInterface(IProtocolFactory, '_wrapped_factory'),  # type: ignore[misc]
 ):
     """
     Wrap a protocol factory, so the underlying connection will

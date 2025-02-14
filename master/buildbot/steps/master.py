@@ -30,12 +30,12 @@ from buildbot.util import runprocess
 
 
 class MasterShellCommand(BuildStep):
-
     """
     Run a shell command locally - on the buildmaster.  The shell command
     COMMAND is specified just as for a RemoteShellCommand.  Note that extra
     logfiles are not supported.
     """
+
     name = 'MasterShellCommand'
     description = 'Running'
     descriptionDone = 'Ran'
@@ -113,12 +113,14 @@ class MasterShellCommand(BuildStep):
 
             def subst(match):
                 return os.environ.get(match.group(1), "")
+
             newenv = {}
             for key, v in env.items():
                 if v is not None:
                     if not isinstance(v, (str, bytes)):
-                        raise RuntimeError("'env' values must be strings or "
-                                           f"lists; key '{key}' is incorrect")
+                        raise RuntimeError(
+                            f"'env' values must be strings or lists; key '{key}' is incorrect"
+                        )
                     newenv[key] = p.sub(subst, env[key])
 
             # RunProcess will take environment values from os.environ in cases of env not having
@@ -130,7 +132,7 @@ class MasterShellCommand(BuildStep):
             env = newenv
 
         if self.logEnviron:
-            yield self.stdio_log.addHeader(f" env: {repr(env)}\n")
+            yield self.stdio_log.addHeader(f" env: {env!r}\n")
 
         if self.stopped:
             return CANCELLED
@@ -139,9 +141,15 @@ class MasterShellCommand(BuildStep):
         on_stderr = lambda data: self._deferwaiter.add(self.stdio_log.addStderr(data))
 
         # TODO add a timeout?
-        self.process = runprocess.create_process(reactor, argv, workdir=self.masterWorkdir,
-                                                 use_pty=self.usePTY, env=env,
-                                                 collect_stdout=on_stdout, collect_stderr=on_stderr)
+        self.process = runprocess.create_process(
+            reactor,
+            argv,
+            workdir=self.masterWorkdir,
+            use_pty=self.usePTY,
+            env=env,
+            collect_stdout=on_stdout,
+            collect_stderr=on_stderr,
+        )
 
         yield self.process.start()
         yield self._deferwaiter.wait()
@@ -177,8 +185,7 @@ class SetProperty(BuildStep):
 
     def run(self):
         properties = self.build.getProperties()
-        properties.setProperty(
-            self.property, self.value, self.name, runtime=True)
+        properties.setProperty(self.property, self.value, self.name, runtime=True)
         return defer.succeed(SUCCESS)
 
 
@@ -209,7 +216,7 @@ class Assert(BuildStep):
     def __init__(self, check, **kwargs):
         super().__init__(**kwargs)
         self.check = check
-        self.descriptionDone = [f"checked {repr(self.check)}"]
+        self.descriptionDone = [f"checked {self.check!r}"]
 
     def run(self):
         if self.check:

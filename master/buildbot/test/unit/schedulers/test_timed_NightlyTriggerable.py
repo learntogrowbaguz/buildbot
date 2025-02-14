@@ -13,7 +13,7 @@
 #
 # Copyright Buildbot Team Members
 
-from twisted.internet import task
+from twisted.internet import defer
 from twisted.trial import unittest
 
 from buildbot.process import properties
@@ -21,31 +21,30 @@ from buildbot.schedulers import timed
 from buildbot.test import fakedb
 from buildbot.test.reactor import TestReactorMixin
 from buildbot.test.util import scheduler
+from buildbot.test.util.state import StateTestMixin
 
 
-class NightlyTriggerable(scheduler.SchedulerMixin, TestReactorMixin,
-                         unittest.TestCase):
-
+class NightlyTriggerable(
+    scheduler.SchedulerMixin, TestReactorMixin, StateTestMixin, unittest.TestCase
+):
     SCHEDULERID = 327
     OBJECTID = 1327
 
+    @defer.inlineCallbacks
     def makeScheduler(self, firstBuildDuration=0, **kwargs):
-        sched = self.attachScheduler(timed.NightlyTriggerable(**kwargs),
-                                     self.OBJECTID, self.SCHEDULERID,
-                                     overrideBuildsetMethods=True,
-                                     createBuilderDB=True)
-
-        # add a Clock to help checking timing issues
-        self.clock = sched._reactor = task.Clock()
-
+        sched = yield self.attachScheduler(
+            timed.NightlyTriggerable(**kwargs),
+            self.OBJECTID,
+            self.SCHEDULERID,
+            overrideBuildsetMethods=True,
+            createBuilderDB=True,
+        )
         return sched
 
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.setUpScheduler()
-
-    def tearDown(self):
-        self.tearDownScheduler()
+        yield self.setUpScheduler()
 
     # utilities
 
@@ -55,15 +54,22 @@ class NightlyTriggerable(scheduler.SchedulerMixin, TestReactorMixin,
         if properties is None:
             properties = {}
         properties['scheduler'] = ('test', 'Scheduler')
-        self.assertEqual(self.addBuildsetCalls, [
-            ('addBuildsetForSourceStampsWithDefaults', dict(
-                builderNames=None,  # uses the default
-                properties=properties,
-                reason="The NightlyTriggerable scheduler named 'test' "
-                       "triggered this build",
-                sourcestamps=sourcestamps,
-                waited_for=False)),
-        ])
+        self.assertEqual(
+            self.addBuildsetCalls,
+            [
+                (
+                    'addBuildsetForSourceStampsWithDefaults',
+                    {
+                        "builderNames": None,  # uses the default
+                        "priority": None,
+                        "properties": properties,
+                        "reason": "The NightlyTriggerable scheduler named 'test' triggered this build",
+                        "sourcestamps": sourcestamps,
+                        "waited_for": False,
+                    },
+                ),
+            ],
+        )
         self.addBuildsetCalls = []
 
     def assertNoBuildsetAdded(self):
@@ -71,269 +77,487 @@ class NightlyTriggerable(scheduler.SchedulerMixin, TestReactorMixin,
 
     # tests
 
+    @defer.inlineCallbacks
     def test_constructor_no_reason(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'])
+        sched = yield self.makeScheduler(name='test', builderNames=['test'])
+        yield sched.configureService()
         self.assertEqual(
-            sched.reason, "The NightlyTriggerable scheduler named 'test' triggered this build")
+            sched.reason, "The NightlyTriggerable scheduler named 'test' triggered this build"
+        )
 
+    @defer.inlineCallbacks
     def test_constructor_reason(self):
-        sched = self.makeScheduler(
-            name='test', builderNames=['test'], reason="hourlytriggerable")
+        sched = yield self.makeScheduler(
+            name='test', builderNames=['test'], reason="hourlytriggerable"
+        )
+        yield sched.configureService()
         self.assertEqual(sched.reason, "hourlytriggerable")
 
+    @defer.inlineCallbacks
     def test_constructor_month(self):
-        sched = self.makeScheduler(
-            name='test', builderNames=['test'], month='1')
+        sched = yield self.makeScheduler(name='test', builderNames=['test'], month='1')
+        yield sched.configureService()
         self.assertEqual(sched.month, "1")
 
+    @defer.inlineCallbacks
     def test_timer_noBuilds(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5])
+        yield self.makeScheduler(name='test', builderNames=['test'], minute=[5])
+        yield self.master.startService()
 
-        sched.activate()
-        self.clock.advance(60 * 60)  # Run for 1h
+        self.reactor.advance(60 * 60)  # Run for 1h
 
         self.assertEqual(self.addBuildsetCalls, [])
 
+    @defer.inlineCallbacks
     def test_timer_oneTrigger(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
+        sched = yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
+        yield self.master.startService()
 
-        sched.activate()
+        sched.trigger(
+            False,
+            [
+                {
+                    "revision": 'myrev',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "codebase": 'cb',
+                },
+            ],
+            set_props=None,
+        )
 
-        sched.trigger(False, [
-            dict(revision='myrev', branch='br', project='p',
-                 repository='r', codebase='cb'),
-        ], set_props=None)
+        self.reactor.advance(60 * 60)  # Run for 1h
 
-        self.clock.advance(60 * 60)  # Run for 1h
+        self.assertBuildsetAdded(
+            sourcestamps=[
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "revision": 'myrev',
+                },
+            ]
+        )
 
-        self.assertBuildsetAdded(sourcestamps=[
-            dict(codebase='cb', branch='br', project='p', repository='r',
-                 revision='myrev'),
-        ])
-
+    @defer.inlineCallbacks
     def test_timer_twoTriggers(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
+        sched = yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
 
-        sched.activate()
+        yield self.master.startService()
 
-        sched.trigger(False, [
-            dict(codebase='cb', revision='myrev1', branch='br', project='p',
-                 repository='r')
-        ], set_props=None)
-        sched.trigger(False, [
-            dict(codebase='cb', revision='myrev2', branch='br', project='p',
-                 repository='r')
-        ], set_props=None)
+        sched.trigger(
+            False,
+            [
+                {
+                    "codebase": 'cb',
+                    "revision": 'myrev1',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                }
+            ],
+            set_props=None,
+        )
+        sched.trigger(
+            False,
+            [
+                {
+                    "codebase": 'cb',
+                    "revision": 'myrev2',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                }
+            ],
+            set_props=None,
+        )
 
-        self.clock.advance(60 * 60)  # Run for 1h
+        self.reactor.advance(60 * 60)  # Run for 1h
 
-        self.assertBuildsetAdded(sourcestamps=[
-            dict(codebase='cb', branch='br', project='p', repository='r',
-                 # builds the second trigger's revision
-                 revision='myrev2'),
-        ])
+        self.assertBuildsetAdded(
+            sourcestamps=[
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    # builds the second trigger's revision
+                    "revision": 'myrev2',
+                },
+            ]
+        )
 
+    @defer.inlineCallbacks
     def test_timer_oneTrigger_then_noBuild(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
+        sched = yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
 
-        sched.activate()
+        yield self.master.startService()
 
-        sched.trigger(False, [
-            dict(codebase='cb', revision='myrev', branch='br', project='p',
-                 repository='r')
-        ], set_props=None)
+        sched.trigger(
+            False,
+            [
+                {
+                    "codebase": 'cb',
+                    "revision": 'myrev',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                }
+            ],
+            set_props=None,
+        )
 
-        self.clock.advance(60 * 60)  # Run for 1h
+        self.reactor.advance(60 * 60)  # Run for 1h
 
-        self.assertBuildsetAdded(sourcestamps=[
-            dict(codebase='cb', branch='br', project='p', repository='r',
-                 revision='myrev'),
-        ])
+        self.assertBuildsetAdded(
+            sourcestamps=[
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "revision": 'myrev',
+                },
+            ]
+        )
 
-        self.clock.advance(60 * 60)  # Run for 1h
+        self.reactor.advance(60 * 60)  # Run for 1h
 
         # no trigger, so the second did not build
         self.assertNoBuildsetAdded()
 
+    @defer.inlineCallbacks
     def test_timer_oneTriggers_then_oneTrigger(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
+        sched = yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
 
-        sched.activate()
+        yield self.master.startService()
 
-        sched.trigger(False, [
-            dict(codebase='cb', revision='myrev1', branch='br', project='p',
-                 repository='r')
-        ], set_props=None)
+        sched.trigger(
+            False,
+            [
+                {
+                    "codebase": 'cb',
+                    "revision": 'myrev1',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                }
+            ],
+            set_props=None,
+        )
 
-        self.clock.advance(60 * 60)  # Run for 1h
-
-        self.assertBuildsetAdded(sourcestamps=[
-            dict(codebase='cb', branch='br', project='p', repository='r',
-                 revision='myrev1'),
-        ])
-
-        sched.trigger(False, [
-            dict(codebase='cb', revision='myrev2', branch='br', project='p',
-                 repository='r')
-        ], set_props=None)
-
-        self.clock.advance(60 * 60)  # Run for 1h
-
-        self.assertBuildsetAdded(sourcestamps=[
-            dict(codebase='cb', branch='br', project='p', repository='r',
-                 revision='myrev2'),
-        ])
-
-    def test_savedTrigger(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
-
-        value_json = \
-            '[ [ {"codebase": "cb", "project": "p", "repository": "r", ' \
-            '"branch": "br", "revision": "myrev"} ], {}, null, null ]'
-
-        self.db.insertTestData([
-            fakedb.Object(
-                id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
-            fakedb.ObjectState(objectid=self.SCHEDULERID, name='lastTrigger',
-                               value_json=value_json),
-        ])
-
-        sched.activate()
-
-        self.clock.advance(60 * 60)  # Run for 1h
-
-        self.assertBuildsetAdded(sourcestamps=[
-            dict(codebase='cb', branch='br', project='p', repository='r',
-                 revision='myrev'),
-        ])
-
-    def test_savedTrigger_dict(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
-
-        value_json = \
-            '[ { "cb": {"codebase": "cb", "project": "p", "repository": "r", ' \
-            '"branch": "br", "revision": "myrev"} }, {}, null, null ]'
-        self.db.insertTestData([
-            fakedb.Object(
-                id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
-            fakedb.ObjectState(objectid=self.SCHEDULERID, name='lastTrigger',
-                               value_json=value_json),
-        ])
-
-        sched.activate()
-
-        self.clock.advance(60 * 60)  # Run for 1h
-
-        self.assertBuildsetAdded(sourcestamps=[
-            dict(codebase='cb', branch='br', project='p', repository='r',
-                 revision='myrev'),
-        ])
-
-    def test_saveTrigger(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
-        self.db.insertTestData([
-            fakedb.Object(
-                id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
-        ])
-
-        sched.activate()
-
-        _, d = sched.trigger(False, [
-            dict(codebase='cb', revision='myrev', branch='br', project='p',
-                 repository='r'),
-        ], set_props=None)
-
-        @d.addCallback
-        def cb(_):
-            self.db.state.assertState(self.SCHEDULERID, lastTrigger=[[
-                dict(codebase='cb', revision='myrev',
-                     branch='br', project='p', repository='r'),
-            ], {}, None, None])
-
-        return d
-
-    def test_saveTrigger_noTrigger(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
-        self.db.insertTestData([
-            fakedb.Object(
-                id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
-        ])
-
-        sched.activate()
-
-        _, d = sched.trigger(False, [
-            dict(codebase='cb', revision='myrev', branch='br', project='p',
-                 repository='r'),
-        ], set_props=None)
-
-        self.clock.advance(60 * 60)  # Run for 1h
-
-        @d.addCallback
-        def cb(_):
-            self.db.state.assertState(self.SCHEDULERID, lastTrigger=None)
-
-        return d
-
-    def test_triggerProperties(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
-        self.db.insertTestData([
-            fakedb.Object(
-                id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
-        ])
-
-        sched.activate()
-
-        sched.trigger(False, [
-            dict(codebase='cb', revision='myrev', branch='br', project='p',
-                 repository='r'),
-        ], properties.Properties(testprop='test'))
-
-        self.db.state.assertState(self.SCHEDULERID, lastTrigger=[[
-            dict(codebase='cb', revision='myrev',
-                 branch='br', project='p', repository='r'),
-        ], {'testprop': ['test', 'TEST']}, None, None])
-
-        self.clock.advance(60 * 60)  # Run for 1h
+        self.reactor.advance(60 * 60)  # Run for 1h
 
         self.assertBuildsetAdded(
-            properties=dict(testprop=('test', 'TEST')),
             sourcestamps=[
-                dict(codebase='cb', branch='br', project='p', repository='r',
-                     revision='myrev'),
-            ])
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "revision": 'myrev1',
+                },
+            ]
+        )
 
-    def test_savedProperties(self):
-        sched = self.makeScheduler(name='test', builderNames=['test'],
-                                   minute=[5], codebases={'cb': {'repository': 'annoying'}})
+        sched.trigger(
+            False,
+            [
+                {
+                    "codebase": 'cb',
+                    "revision": 'myrev2',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                }
+            ],
+            set_props=None,
+        )
 
-        value_json = \
-            '[ [ {"codebase": "cb", "project": "p", "repository": "r", ' \
-            '"branch": "br", "revision": "myrev"} ], ' \
-            '{"testprop": ["test", "TEST"]}, null, null ]'
-        self.db.insertTestData([
-            fakedb.Object(
-                id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
-            fakedb.ObjectState(objectid=self.SCHEDULERID, name='lastTrigger',
-                               value_json=value_json),
+        self.reactor.advance(60 * 60)  # Run for 1h
+
+        self.assertBuildsetAdded(
+            sourcestamps=[
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "revision": 'myrev2',
+                },
+            ]
+        )
+
+    @defer.inlineCallbacks
+    def test_savedTrigger(self):
+        yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
+
+        value_json = (
+            '[ [ {"codebase": "cb", "project": "p", "repository": "r", '
+            '"branch": "br", "revision": "myrev"} ], {}, null, null ]'
+        )
+
+        yield self.master.db.insert_test_data([
+            fakedb.Object(id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
+            fakedb.ObjectState(
+                objectid=self.SCHEDULERID, name='lastTrigger', value_json=value_json
+            ),
         ])
 
-        sched.activate()
+        yield self.master.startService()
 
-        self.clock.advance(60 * 60)  # Run for 1h
+        self.reactor.advance(60 * 60)  # Run for 1h
+
+        self.assertBuildsetAdded(
+            sourcestamps=[
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "revision": 'myrev',
+                },
+            ]
+        )
+
+    @defer.inlineCallbacks
+    def test_savedTrigger_dict(self):
+        yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
+
+        value_json = (
+            '[ { "cb": {"codebase": "cb", "project": "p", "repository": "r", '
+            '"branch": "br", "revision": "myrev"} }, {}, null, null ]'
+        )
+        yield self.master.db.insert_test_data([
+            fakedb.Object(id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
+            fakedb.ObjectState(
+                objectid=self.SCHEDULERID, name='lastTrigger', value_json=value_json
+            ),
+        ])
+
+        yield self.master.startService()
+
+        self.reactor.advance(60 * 60)  # Run for 1h
+
+        self.assertBuildsetAdded(
+            sourcestamps=[
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "revision": 'myrev',
+                },
+            ]
+        )
+
+    @defer.inlineCallbacks
+    def test_saveTrigger(self):
+        sched = yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
+        yield self.master.db.insert_test_data([
+            fakedb.Object(id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
+        ])
+
+        yield self.master.startService()
+
+        _, d = sched.trigger(
+            False,
+            [
+                {
+                    "codebase": 'cb',
+                    "revision": 'myrev',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                },
+            ],
+            set_props=None,
+        )
+
+        yield d
+        yield self.assert_state(
+            self.SCHEDULERID,
+            lastTrigger=[
+                [
+                    {
+                        "codebase": 'cb',
+                        "revision": 'myrev',
+                        "branch": 'br',
+                        "project": 'p',
+                        "repository": 'r',
+                    },
+                ],
+                {},
+                None,
+                None,
+            ],
+        )
+
+    @defer.inlineCallbacks
+    def test_saveTrigger_noTrigger(self):
+        sched = yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
+        yield self.master.db.insert_test_data([
+            fakedb.Object(id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
+        ])
+
+        yield self.master.startService()
+
+        _, d = sched.trigger(
+            False,
+            [
+                {
+                    "codebase": 'cb',
+                    "revision": 'myrev',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                },
+            ],
+            set_props=None,
+        )
+
+        self.reactor.advance(60 * 60)  # Run for 1h
+
+        yield d
+        yield self.assert_state(self.SCHEDULERID, lastTrigger=None)
+
+    @defer.inlineCallbacks
+    def test_triggerProperties(self):
+        sched = yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
+        yield self.master.db.insert_test_data([
+            fakedb.Object(id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
+        ])
+
+        yield self.master.startService()
+
+        sched.trigger(
+            False,
+            [
+                {
+                    "codebase": 'cb',
+                    "revision": 'myrev',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                },
+            ],
+            properties.Properties(testprop='test'),
+        )
+
+        yield self.assert_state(
+            self.SCHEDULERID,
+            lastTrigger=[
+                [
+                    {
+                        "codebase": 'cb',
+                        "revision": 'myrev',
+                        "branch": 'br',
+                        "project": 'p',
+                        "repository": 'r',
+                    },
+                ],
+                {'testprop': ['test', 'TEST']},
+                None,
+                None,
+            ],
+        )
+
+        self.reactor.advance(60 * 60)  # Run for 1h
+
+        self.assertBuildsetAdded(
+            properties={"testprop": ('test', 'TEST')},
+            sourcestamps=[
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "revision": 'myrev',
+                },
+            ],
+        )
+
+    @defer.inlineCallbacks
+    def test_savedProperties(self):
+        yield self.makeScheduler(
+            name='test',
+            builderNames=['test'],
+            minute=[5],
+            codebases={'cb': {'repository': 'annoying'}},
+        )
+
+        value_json = (
+            '[ [ {"codebase": "cb", "project": "p", "repository": "r", '
+            '"branch": "br", "revision": "myrev"} ], '
+            '{"testprop": ["test", "TEST"]}, null, null ]'
+        )
+        yield self.master.db.insert_test_data([
+            fakedb.Object(id=self.SCHEDULERID, name='test', class_name='NightlyTriggerable'),
+            fakedb.ObjectState(
+                objectid=self.SCHEDULERID, name='lastTrigger', value_json=value_json
+            ),
+        ])
+
+        yield self.master.startService()
+
+        self.reactor.advance(60 * 60)  # Run for 1h
 
         self.assertBuildsetAdded(
             properties={'testprop': ('test', 'TEST')},
             sourcestamps=[
-                dict(codebase='cb', branch='br', project='p', repository='r',
-                     revision='myrev'),
-            ])
+                {
+                    "codebase": 'cb',
+                    "branch": 'br',
+                    "project": 'p',
+                    "repository": 'r',
+                    "revision": 'myrev',
+                },
+            ],
+        )

@@ -22,12 +22,10 @@ from buildbot import config
 from buildbot.interfaces import IChangeSource
 from buildbot.util import service
 from buildbot.util.poll import method as poll_method
-from buildbot.warnings import warn_deprecated
 
 
 @implementer(IChangeSource)
 class ChangeSource(service.ClusteredBuildbotService):
-
     def describe(self):
         pass
 
@@ -45,12 +43,12 @@ class ChangeSource(service.ClusteredBuildbotService):
         return self.master.data.updates.findChangeSourceId(self.name)
 
     def _claimService(self):
-        return self.master.data.updates.trySetChangeSourceMaster(self.serviceid,
-                                                                 self.master.masterid)
+        return self.master.data.updates.trySetChangeSourceMaster(
+            self.serviceid, self.master.masterid
+        )
 
     def _unclaimService(self):
-        return self.master.data.updates.trySetChangeSourceMaster(self.serviceid,
-                                                                 None)
+        return self.master.data.updates.trySetChangeSourceMaster(self.serviceid, None)
 
 
 class ReconfigurablePollingChangeSource(ChangeSource):
@@ -59,8 +57,14 @@ class ReconfigurablePollingChangeSource(ChangeSource):
     pollRandomDelayMin = None
     pollRandomDelayMax = None
 
-    def checkConfig(self, name=None, pollInterval=60 * 10, pollAtLaunch=False,
-                    pollRandomDelayMin=0, pollRandomDelayMax=0):
+    def checkConfig(
+        self,
+        name=None,
+        pollInterval=60 * 10,
+        pollAtLaunch=False,
+        pollRandomDelayMin=0,
+        pollRandomDelayMax=0,
+    ):
         super().checkConfig(name=name)
         if pollInterval < 0:
             config.error(f"interval must be >= 0: {pollInterval}")
@@ -74,9 +78,16 @@ class ReconfigurablePollingChangeSource(ChangeSource):
             config.error(f"max random delay must be < {pollInterval}: {pollRandomDelayMax}")
 
     @defer.inlineCallbacks
-    def reconfigService(self, name=None, pollInterval=60 * 10, pollAtLaunch=False,
-                        pollRandomDelayMin=0, pollRandomDelayMax=0):
-        self.pollInterval, prevPollInterval = pollInterval, self.pollInterval
+    def reconfigService(
+        self,
+        name=None,
+        pollInterval=60 * 10,
+        pollAtLaunch=False,
+        pollRandomDelayMin=0,
+        pollRandomDelayMax=0,
+    ):
+        prevPollInterval = self.pollInterval
+        self.pollInterval = pollInterval
         self.pollAtLaunch = pollAtLaunch
         self.pollRandomDelayMin = pollRandomDelayMin
         self.pollRandomDelayMax = pollRandomDelayMax
@@ -87,9 +98,12 @@ class ReconfigurablePollingChangeSource(ChangeSource):
             yield self.doPoll.stop()
             # As a implementation detail, poller will 'pollAtReconfigure' if poll interval changes
             # and pollAtLaunch=True
-            yield self.doPoll.start(interval=self.pollInterval, now=self.pollAtLaunch,
-                                    random_delay_min=self.pollRandomDelayMin,
-                                    random_delay_max=self.pollRandomDelayMax)
+            yield self.doPoll.start(
+                interval=self.pollInterval,
+                now=self.pollAtLaunch,
+                random_delay_min=self.pollRandomDelayMin,
+                random_delay_max=self.pollRandomDelayMax,
+            )
 
     def poll(self):
         pass
@@ -104,33 +118,12 @@ class ReconfigurablePollingChangeSource(ChangeSource):
         self.doPoll()
 
     def activate(self):
-        self.doPoll.start(interval=self.pollInterval, now=self.pollAtLaunch,
-                          random_delay_min=self.pollRandomDelayMin,
-                          random_delay_max=self.pollRandomDelayMax)
+        self.doPoll.start(
+            interval=self.pollInterval,
+            now=self.pollAtLaunch,
+            random_delay_min=self.pollRandomDelayMin,
+            random_delay_max=self.pollRandomDelayMax,
+        )
 
     def deactivate(self):
         return self.doPoll.stop()
-
-
-class PollingChangeSource(ReconfigurablePollingChangeSource):
-    # Legacy code will be very painful to port to BuildbotService life cycle
-    # because the unit tests keep doing shortcuts for the Service life cycle (i.e by no calling
-    # startService) instead of porting everything at once, we make a class to support legacy
-
-    def checkConfig(self, name=None, pollInterval=60 * 10, pollAtLaunch=False,
-                    pollRandomDelayMin=0, pollRandomDelayMax=0, **kwargs):
-        super().checkConfig(name=name, pollInterval=60 * 10, pollAtLaunch=False,
-                            pollRandomDelayMin=0, pollRandomDelayMax=0)
-
-        warn_deprecated('3.3.0', 'PollingChangeSource has been deprecated: ' +
-                        'please use ReconfigurablePollingChangeSource')
-
-        self.pollInterval = pollInterval
-        self.pollAtLaunch = pollAtLaunch
-        self.pollRandomDelayMin = pollRandomDelayMin
-        self.pollRandomDelayMax = pollRandomDelayMax
-
-    def reconfigService(self, *args, **kwargs):
-        # BuildbotServiceManager will detect such exception and swap old service with new service,
-        # instead of just reconfiguring
-        raise NotImplementedError()

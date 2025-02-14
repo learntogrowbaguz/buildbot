@@ -20,11 +20,10 @@ from buildbot.util import tuplematch
 
 
 class MatchTuple(tuplematching.TupleMatchingMixin, unittest.TestCase):
-
     # called by the TupleMatchingMixin methods
 
     def do_test_match(self, routingKey, shouldMatch, filter):
         result = tuplematch.matchTuple(routingKey, filter)
         should_match_string = 'should match' if shouldMatch else "shouldn't match"
-        msg = f"{repr(routingKey)} {should_match_string} {repr(filter)}"
+        msg = f"{routingKey!r} {should_match_string} {filter!r}"
         self.assertEqual(shouldMatch, result, msg)

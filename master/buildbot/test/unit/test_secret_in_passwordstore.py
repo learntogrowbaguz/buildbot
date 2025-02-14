@@ -28,23 +28,20 @@ from buildbot.test.runprocess import MasterRunProcessMixin
 from buildbot.test.util.config import ConfigErrorsMixin
 
 
-class TestSecretInPass(MasterRunProcessMixin, TestReactorMixin, ConfigErrorsMixin,
-                       unittest.TestCase):
-
+class TestSecretInPass(
+    MasterRunProcessMixin, TestReactorMixin, ConfigErrorsMixin, unittest.TestCase
+):
     @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
         self.setup_master_run_process()
-        self.master = fakemaster.make_master(self)
+        self.master = yield fakemaster.make_master(self)
         with mock.patch.object(Path, "is_file", return_value=True):
             self.tmp_dir = self.create_temp_dir("temp")
             self.srvpass = SecretInPass("password", self.tmp_dir)
             yield self.srvpass.setServiceParent(self.master)
             yield self.master.startService()
-
-    @defer.inlineCallbacks
-    def tearDown(self):
-        yield self.srvpass.stopService()
+            self.addCleanup(self.srvpass.stopService)
 
     def create_temp_dir(self, dirname):
         tempdir = FilePath(self.mktemp())
@@ -54,8 +51,8 @@ class TestSecretInPass(MasterRunProcessMixin, TestReactorMixin, ConfigErrorsMixi
     def test_check_config_secret_in_pass_service(self):
         self.assertEqual(self.srvpass.name, "SecretInPass")
         env = self.srvpass._env
-        self.assertEquals(env["PASSWORD_STORE_GPG_OPTS"], "--passphrase password")
-        self.assertEquals(env["PASSWORD_STORE_DIR"], self.tmp_dir)
+        self.assertEqual(env["PASSWORD_STORE_GPG_OPTS"], "--passphrase password")
+        self.assertEqual(env["PASSWORD_STORE_DIR"], self.tmp_dir)
 
     def test_check_config_binary_error_secret_in_pass_service(self):
         expected_error_msg = "pass does not exist in PATH"
@@ -76,15 +73,12 @@ class TestSecretInPass(MasterRunProcessMixin, TestReactorMixin, ConfigErrorsMixi
             yield self.srvpass.reconfigService("password2", otherdir)
         self.assertEqual(self.srvpass.name, "SecretInPass")
         env = self.srvpass._env
-        self.assertEquals(env["PASSWORD_STORE_GPG_OPTS"], "--passphrase password2")
-        self.assertEquals(env["PASSWORD_STORE_DIR"], otherdir)
+        self.assertEqual(env["PASSWORD_STORE_GPG_OPTS"], "--passphrase password2")
+        self.assertEqual(env["PASSWORD_STORE_DIR"], otherdir)
 
     @defer.inlineCallbacks
     def test_get_secret_in_pass(self):
-        self.expect_commands(
-            ExpectMasterShell(['pass', 'secret'])
-            .stdout(b'value')
-        )
+        self.expect_commands(ExpectMasterShell(['pass', 'secret']).stdout(b'value'))
 
         value = yield self.srvpass.get("secret")
         self.assertEqual(value, "value")
@@ -94,8 +88,7 @@ class TestSecretInPass(MasterRunProcessMixin, TestReactorMixin, ConfigErrorsMixi
     @defer.inlineCallbacks
     def test_get_secret_in_pass_multiple_lines_unix(self):
         self.expect_commands(
-            ExpectMasterShell(['pass', 'secret'])
-            .stdout(b"value1\nvalue2\nvalue3")
+            ExpectMasterShell(['pass', 'secret']).stdout(b"value1\nvalue2\nvalue3")
         )
 
         value = yield self.srvpass.get("secret")
@@ -106,8 +99,7 @@ class TestSecretInPass(MasterRunProcessMixin, TestReactorMixin, ConfigErrorsMixi
     @defer.inlineCallbacks
     def test_get_secret_in_pass_multiple_lines_darwin(self):
         self.expect_commands(
-            ExpectMasterShell(['pass', 'secret'])
-            .stdout(b"value1\rvalue2\rvalue3")
+            ExpectMasterShell(['pass', 'secret']).stdout(b"value1\rvalue2\rvalue3")
         )
 
         value = yield self.srvpass.get("secret")
@@ -118,8 +110,7 @@ class TestSecretInPass(MasterRunProcessMixin, TestReactorMixin, ConfigErrorsMixi
     @defer.inlineCallbacks
     def test_get_secret_in_pass_multiple_lines_windows(self):
         self.expect_commands(
-            ExpectMasterShell(['pass', 'secret'])
-            .stdout(b"value1\r\nvalue2\r\nvalue3")
+            ExpectMasterShell(['pass', 'secret']).stdout(b"value1\r\nvalue2\r\nvalue3")
         )
 
         value = yield self.srvpass.get("secret")
@@ -129,10 +120,7 @@ class TestSecretInPass(MasterRunProcessMixin, TestReactorMixin, ConfigErrorsMixi
 
     @defer.inlineCallbacks
     def test_get_secret_in_pass_not_found(self):
-        self.expect_commands(
-            ExpectMasterShell(['pass', 'secret'])
-            .stderr(b"Not found")
-        )
+        self.expect_commands(ExpectMasterShell(['pass', 'secret']).stderr(b"Not found"))
 
         value = yield self.srvpass.get("secret")
         self.assertEqual(value, None)

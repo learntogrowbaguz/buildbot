@@ -13,15 +13,11 @@
 #
 # Copyright Buildbot Team Members
 
-from __future__ import absolute_import
-from __future__ import print_function
-
 from buildbot_worker import runprocess
 from buildbot_worker.commands import base
 
 
 class WorkerShellCommand(base.Command):
-
     requiredArgs = ['workdir', 'command']
 
     def start(self):
@@ -29,6 +25,7 @@ class WorkerShellCommand(base.Command):
         workdir = args['workdir']
 
         c = runprocess.RunProcess(
+            self.command_id,
             args['command'],
             workdir,
             self.protocol_command.unicode_encoding,
@@ -36,6 +33,7 @@ class WorkerShellCommand(base.Command):
             environ=args.get('env'),
             timeout=args.get('timeout', None),
             maxTime=args.get('maxTime', None),
+            max_lines=args.get('max_lines', None),
             sigtermTime=args.get('sigtermTime', None),
             sendStdout=args.get('want_stdout', True),
             sendStderr=args.get('want_stderr', True),

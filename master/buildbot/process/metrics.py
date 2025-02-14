@@ -32,6 +32,8 @@ Basic architecture:
     MetricWatcher
 """
 
+from __future__ import annotations
+
 import gc
 import os
 import sys
@@ -40,6 +42,7 @@ from collections import deque
 
 from twisted.application import service
 from twisted.internet import reactor
+from twisted.internet.base import ReactorBase
 from twisted.internet.task import LoopingCall
 from twisted.python import log
 
@@ -49,20 +52,19 @@ from buildbot.util import service as util_service
 # Make use of the resource module if we can
 try:
     import resource
+
     assert resource
 except ImportError:
-    resource = None
+    resource = None  # type: ignore[assignment]
 
 
 class MetricEvent:
-
     @classmethod
     def log(cls, *args, **kwargs):
         log.msg(metric=cls(*args, **kwargs))
 
 
 class MetricCountEvent(MetricEvent):
-
     def __init__(self, counter, count=1, absolute=False):
         self.counter = counter
         self.count = count
@@ -70,7 +72,6 @@ class MetricCountEvent(MetricEvent):
 
 
 class MetricTimeEvent(MetricEvent):
-
     def __init__(self, timer, elapsed):
         self.timer = timer
         self.elapsed = elapsed
@@ -81,7 +82,6 @@ ALARM_TEXT = ["OK", "WARN", "CRIT"]
 
 
 class MetricAlarmEvent(MetricEvent):
-
     def __init__(self, alarm, msg=None, level=ALARM_OK):
         self.alarm = alarm
         self.level = level
@@ -93,13 +93,15 @@ def countMethod(counter):
         def wrapper(*args, **kwargs):
             MetricCountEvent.log(counter=counter)
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 class Timer:
     # For testing
-    _reactor = None
+    _reactor: ReactorBase | None = None
 
     def __init__(self, name):
         self.name = name
@@ -109,6 +111,7 @@ class Timer:
         def wrapper(*args, **kwargs):
             self.start()
             return func(*args, **kwargs)
+
         return wrapper
 
     def stopTimer(self, func):
@@ -117,6 +120,7 @@ class Timer:
                 return func(*args, **kwargs)
             finally:
                 self.stop()
+
         return wrapper
 
     def start(self):
@@ -140,12 +144,13 @@ def timeMethod(name, _reactor=None):
                 return func(*args, **kwargs)
             finally:
                 t.stop()
+
         return wrapper
+
     return decorator
 
 
 class FiniteList(deque):
-
     def __init__(self, maxlen=10):
         self._maxlen = maxlen
         super().__init__()
@@ -157,7 +162,6 @@ class FiniteList(deque):
 
 
 class AveragingFiniteList(FiniteList):
-
     def __init__(self, maxlen=10):
         super().__init__(maxlen)
         self.average = 0
@@ -176,7 +180,6 @@ class AveragingFiniteList(FiniteList):
 
 
 class MetricHandler:
-
     def __init__(self, metrics):
         self.metrics = metrics
         self.watchers = []
@@ -210,7 +213,7 @@ class MetricHandler:
 
 
 class MetricCountHandler(MetricHandler):
-    _counters = None
+    _counters: defaultdict[str, int] | None = None
 
     def reset(self):
         self._counters = defaultdict(int)
@@ -237,11 +240,11 @@ class MetricCountHandler(MetricHandler):
         retval = {}
         for counter in sorted(self.keys()):
             retval[counter] = self.get(counter)
-        return dict(counters=retval)
+        return {"counters": retval}
 
 
 class MetricTimeHandler(MetricHandler):
-    _timers = None
+    _timers: defaultdict[str, AveragingFiniteList] | None = None
 
     def reset(self):
         self._timers = defaultdict(AveragingFiniteList)
@@ -265,11 +268,11 @@ class MetricTimeHandler(MetricHandler):
         retval = {}
         for timer in sorted(self.keys()):
             retval[timer] = self.get(timer)
-        return dict(timers=retval)
+        return {"timers": retval}
 
 
 class MetricAlarmHandler(MetricHandler):
-    _alarms = None
+    _alarms: defaultdict[str, tuple[int, str]] | None
 
     def reset(self):
         self._alarms = defaultdict(lambda x: ALARM_OK)
@@ -290,11 +293,10 @@ class MetricAlarmHandler(MetricHandler):
         retval = {}
         for alarm, (level, msg) in sorted(self._alarms.items()):
             retval[alarm] = (ALARM_TEXT[level], msg)
-        return dict(alarms=retval)
+        return {"alarms": retval}
 
 
 class AttachedWorkersWatcher:
-
     def __init__(self, metrics):
         self.metrics = metrics
 
@@ -304,9 +306,11 @@ class AttachedWorkersWatcher:
         h = self.metrics.getHandler(MetricCountEvent)
         if not h:
             log.msg("Couldn't get MetricCountEvent handler")
-            MetricAlarmEvent.log('AttachedWorkersWatcher',
-                                 msg="Coudln't get MetricCountEvent handler",
-                                 level=ALARM_WARN)
+            MetricAlarmEvent.log(
+                'AttachedWorkersWatcher',
+                msg="Coudln't get MetricCountEvent handler",
+                level=ALARM_WARN,
+            )
             return
         botmaster_count = h.get('BotMaster.attached_workers')
         worker_count = h.get('AbstractWorker.attached_workers')
@@ -318,8 +322,9 @@ class AttachedWorkersWatcher:
         else:
             level = ALARM_OK
 
-        MetricAlarmEvent.log('attached_workers', msg=f'{botmaster_count} {worker_count}',
-                             level=level)
+        MetricAlarmEvent.log(
+            'attached_workers', msg=f'{botmaster_count} {worker_count}', level=level
+        )
 
 
 def _get_rss():
@@ -345,10 +350,24 @@ def periodicCheck(_reactor=reactor):
 
         if resource:
             r = resource.getrusage(resource.RUSAGE_SELF)
-            attrs = ['ru_utime', 'ru_stime', 'ru_maxrss', 'ru_ixrss', 'ru_idrss',
-                     'ru_isrss', 'ru_minflt', 'ru_majflt', 'ru_nswap',
-                     'ru_inblock', 'ru_oublock', 'ru_msgsnd', 'ru_msgrcv',
-                     'ru_nsignals', 'ru_nvcsw', 'ru_nivcsw']
+            attrs = [
+                'ru_utime',
+                'ru_stime',
+                'ru_maxrss',
+                'ru_ixrss',
+                'ru_idrss',
+                'ru_isrss',
+                'ru_minflt',
+                'ru_majflt',
+                'ru_nswap',
+                'ru_inblock',
+                'ru_oublock',
+                'ru_msgsnd',
+                'ru_msgrcv',
+                'ru_nsignals',
+                'ru_nvcsw',
+                'ru_nivcsw',
+            ]
             for i, a in enumerate(attrs):
                 # Linux versions prior to 2.6.32 didn't report this value, but we
                 # can calculate it from /proc/<pid>/statm
@@ -356,8 +375,7 @@ def periodicCheck(_reactor=reactor):
                 if a == 'ru_maxrss' and v == 0:
                     v = _get_rss() * resource.getpagesize() / 1024
                 MetricCountEvent.log(f'resource.{a}', v, absolute=True)
-            MetricCountEvent.log(
-                'resource.pagesize', resource.getpagesize(), absolute=True)
+            MetricCountEvent.log('resource.pagesize', resource.getpagesize(), absolute=True)
         # Measure the reactor delay
         then = util.now(_reactor)
         dt = 0.1
@@ -366,13 +384,13 @@ def periodicCheck(_reactor=reactor):
             now = util.now(_reactor)
             delay = (now - then) - dt
             MetricTimeEvent.log("reactorDelay", delay)
+
         _reactor.callLater(dt, cb)
     except Exception:
         log.err(None, "while collecting VM metrics")
 
 
-class MetricLogObserver(util_service.ReconfigurableServiceMixin,
-                        service.MultiService):
+class MetricLogObserver(util_service.ReconfigurableServiceMixin, service.MultiService):
     _reactor = reactor
 
     def __init__(self):
@@ -393,8 +411,7 @@ class MetricLogObserver(util_service.ReconfigurableServiceMixin,
         self.registerHandler(MetricTimeEvent, MetricTimeHandler(self))
         self.registerHandler(MetricAlarmEvent, MetricAlarmHandler(self))
 
-        self.getHandler(MetricCountEvent).addWatcher(
-            AttachedWorkersWatcher(self))
+        self.getHandler(MetricCountEvent).addWatcher(AttachedWorkersWatcher(self))
 
     def reconfigServiceWithBuildbotConfig(self, new_config):
         # first, enable or disable
@@ -423,8 +440,7 @@ class MetricLogObserver(util_service.ReconfigurableServiceMixin,
                     self.periodic_task.stop()
                     self.periodic_task = None
                 if periodic_interval:
-                    self.periodic_task = LoopingCall(periodicCheck,
-                                                     self._reactor)
+                    self.periodic_task = LoopingCall(periodicCheck, self._reactor)
                     self.periodic_task.clock = self._reactor
                     self.periodic_task.start(periodic_interval)
 

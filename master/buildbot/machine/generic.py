@@ -23,6 +23,7 @@ from zope.interface import implementer
 from buildbot import config
 from buildbot.interfaces import IMachineAction
 from buildbot.machine.latent import AbstractLatentMachine
+from buildbot.util import httpclientservice
 from buildbot.util import misc
 from buildbot.util import private_tempdir
 from buildbot.util import runprocess
@@ -31,15 +32,13 @@ from buildbot.util.git import getSshKnownHostsContents
 
 
 class GenericLatentMachine(AbstractLatentMachine):
-
     def checkConfig(self, name, start_action, stop_action, **kwargs):
         super().checkConfig(name, **kwargs)
 
-        for action, arg_name in [(start_action, 'start_action'),
-                                 (stop_action, 'stop_action')]:
+        for action, arg_name in [(start_action, 'start_action'), (stop_action, 'stop_action')]:
             if not IMachineAction.providedBy(action):
                 msg = f"{arg_name} of {self.name} does not implement required interface"
-                raise Exception(msg)
+                raise RuntimeError(msg)
 
     @defer.inlineCallbacks
     def reconfigService(self, name, start_action, stop_action, **kwargs):
@@ -58,8 +57,10 @@ class GenericLatentMachine(AbstractLatentMachine):
 def runProcessLogFailures(reactor, args, expectedCode=0):
     code, stdout, stderr = yield runprocess.run_process(reactor, args)
     if code != expectedCode:
-        log.err(f'Got unexpected return code when running {args}: '
-                f'code: {code}, stdout: {stdout}, stderr: {stderr}')
+        log.err(
+            f'Got unexpected return code when running {args}: '
+            f'code: {code}, stdout: {stdout}, stderr: {stderr}'
+        )
         return False
     return True
 
@@ -77,8 +78,7 @@ class _LocalMachineActionMixin:
 
 
 class _SshActionMixin:
-    def setupSsh(self, sshBin, host, remoteCommand, sshKey=None,
-                 sshHostKey=None):
+    def setupSsh(self, sshBin, host, remoteCommand, sshKey=None, sshHostKey=None):
         if not isinstance(sshBin, str):
             config.error('sshBin parameter must be a string')
         if not isinstance(host, str):
@@ -97,7 +97,7 @@ class _SshActionMixin:
         args = getSshArgsForKeys(key_path, known_hosts_path)
         args.append((yield manager.renderSecrets(self._host)))
         args.extend((yield manager.renderSecrets(self._remoteCommand)))
-        return (yield runProcessLogFailures(manager.master.reactor, [self._sshBin] + args))
+        return (yield runProcessLogFailures(manager.master.reactor, [self._sshBin, *args]))
 
     @defer.inlineCallbacks
     def _prepareSshKeys(self, manager, temp_dir_path):
@@ -106,8 +106,7 @@ class _SshActionMixin:
             ssh_key_data = yield manager.renderSecrets(self._sshKey)
 
             key_path = os.path.join(temp_dir_path, 'ssh-key')
-            misc.writeLocalFile(key_path, ssh_key_data,
-                                mode=stat.S_IRUSR)
+            misc.writeLocalFile(key_path, ssh_key_data, mode=stat.S_IRUSR)
 
         known_hosts_path = None
         if self._sshHostKey is not None:
@@ -123,10 +122,9 @@ class _SshActionMixin:
     def perform(self, manager):
         if self._sshKey is not None or self._sshHostKey is not None:
             with private_tempdir.PrivateTemporaryDirectory(
-                    prefix='ssh-', dir=manager.master.basedir) as temp_dir:
-
-                key_path, hosts_path = yield self._prepareSshKeys(manager,
-                                                                  temp_dir)
+                prefix='ssh-', dir=manager.master.basedir
+            ) as temp_dir:
+                key_path, hosts_path = yield self._prepareSshKeys(manager, temp_dir)
 
                 ret = yield self._performImpl(manager, key_path, hosts_path)
         else:
@@ -147,25 +145,109 @@ class LocalWOLAction(LocalWakeAction):
 
 @implementer(IMachineAction)
 class RemoteSshWakeAction(_SshActionMixin):
-    def __init__(self, host, remoteCommand, sshBin='ssh',
-                 sshKey=None, sshHostKey=None):
-        self.setupSsh(sshBin, host, remoteCommand,
-                      sshKey=sshKey, sshHostKey=sshHostKey)
+    def __init__(self, host, remoteCommand, sshBin='ssh', sshKey=None, sshHostKey=None):
+        self.setupSsh(sshBin, host, remoteCommand, sshKey=sshKey, sshHostKey=sshHostKey)
 
 
 class RemoteSshWOLAction(RemoteSshWakeAction):
-    def __init__(self, host, wakeMac, wolBin='wakeonlan', sshBin='ssh',
-                 sshKey=None, sshHostKey=None):
-        RemoteSshWakeAction.__init__(self, host, [wolBin, wakeMac],
-                                     sshBin=sshBin,
-                                     sshKey=sshKey, sshHostKey=sshHostKey)
+    def __init__(
+        self, host, wakeMac, wolBin='wakeonlan', sshBin='ssh', sshKey=None, sshHostKey=None
+    ):
+        RemoteSshWakeAction.__init__(
+            self, host, [wolBin, wakeMac], sshBin=sshBin, sshKey=sshKey, sshHostKey=sshHostKey
+        )
 
 
 @implementer(IMachineAction)
 class RemoteSshSuspendAction(_SshActionMixin):
-    def __init__(self, host, remoteCommand=None, sshBin='ssh',
-                 sshKey=None, sshHostKey=None):
+    def __init__(self, host, remoteCommand=None, sshBin='ssh', sshKey=None, sshHostKey=None):
         if remoteCommand is None:
             remoteCommand = ['systemctl', 'suspend']
-        self.setupSsh(sshBin, host, remoteCommand,
-                      sshKey=sshKey, sshHostKey=sshHostKey)
+        self.setupSsh(sshBin, host, remoteCommand, sshKey=sshKey, sshHostKey=sshHostKey)
+
+
+@implementer(IMachineAction)
+class HttpAction:
+    def __init__(
+        self,
+        url,
+        method,
+        params=None,
+        data=None,
+        json=None,
+        headers=None,
+        cookies=None,
+        files=None,
+        auth=None,
+        timeout=None,
+        allow_redirects=None,
+        proxies=None,
+    ):
+        self.url = url
+        self.method = method
+        self.params = params
+        self.data = data
+        self.json = json
+        self.headers = headers
+        self.cookies = cookies
+        self.files = files
+        self.auth = auth
+        self.timeout = timeout
+        self.allow_redirects = allow_redirects
+        self.proxies = proxies
+
+    @defer.inlineCallbacks
+    def perform(self, manager):
+        (
+            url,
+            method,
+            params,
+            data,
+            json,
+            headers,
+            cookies,
+            files,
+            auth,
+            timeout,
+            allow_redirects,
+            proxies,
+        ) = yield manager.renderSecrets((
+            self.url,
+            self.method,
+            self.params,
+            self.data,
+            self.json,
+            self.headers,
+            self.cookies,
+            self.files,
+            self.auth,
+            self.timeout,
+            self.allow_redirects,
+            self.proxies,
+        ))
+
+        http = httpclientservice.HTTPSession(manager.master.httpservice, base_url=url)
+        if method == 'get':
+            fn = http.get
+        elif method == 'put':
+            fn = http.put
+        elif method == 'delete':
+            fn = http.delete
+        elif method == 'post':
+            fn = http.post
+        else:
+            config.error(f'Invalid method {method}')
+
+        yield fn(
+            ep='',
+            params=params,
+            data=data,
+            json=json,
+            headers=headers,
+            cookies=cookies,
+            files=files,
+            auth=auth,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            proxies=proxies,
+        )

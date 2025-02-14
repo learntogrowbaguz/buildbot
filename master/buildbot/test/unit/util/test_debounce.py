@@ -23,7 +23,6 @@ from buildbot.util import debounce
 
 
 class DebouncedClass:
-
     def __init__(self, reactor):
         self.callDeferred = None
         self.calls = 0
@@ -33,6 +32,13 @@ class DebouncedClass:
 
     @debounce.method(wait=4.0, get_reactor=lambda self: self.reactor)
     def maybe(self):
+        return self._maybe()
+
+    @debounce.method(wait=4.0, until_idle=True, get_reactor=lambda self: self.reactor)
+    def maybe_until_idle(self):
+        return self._maybe()
+
+    def _maybe(self):
         assert not self.callDeferred
         self.calls += 1
         log.msg('debounced function called')
@@ -43,17 +49,16 @@ class DebouncedClass:
             log.msg('debounced function complete')
             self.callDeferred = None
             return x
+
         return self.callDeferred
 
 
 class DebounceTest(unittest.TestCase):
-
     def setUp(self):
         self.clock = task.Clock()
 
     def scenario(self, events):
-        dbs = dict((k, DebouncedClass(self.clock))
-                   for k in {n for n, _, _ in events})
+        dbs = dict((k, DebouncedClass(self.clock)) for k in {n for n, _, _ in events})
         while events:
             n, t, e = events.pop(0)
             db = dbs[n]
@@ -62,10 +67,15 @@ class DebounceTest(unittest.TestCase):
                 self.clock.advance(t - self.clock.seconds())
             if e == 'maybe':
                 db.maybe()
+            elif e == 'maybe_until_idle':
+                db.maybe_until_idle()
             elif e == 'called':
                 db.expCalls += 1
             elif e == 'complete':
                 db.callDeferred.callback(None)
+            elif e == 'complete-and-called':
+                db.callDeferred.callback(None)
+                db.expCalls += 1
             elif e == 'fail':
                 db.callDeferred.errback(failure.Failure(RuntimeError()))
             elif e == 'failure_logged':
@@ -96,7 +106,7 @@ class DebounceTest(unittest.TestCase):
             (1, 4.0, 'called'),
             (1, 5.0, 'check'),
             (1, 6.0, 'complete'),
-            (1, 7.0, 'check')
+            (1, 7.0, 'check'),
         ])
 
     def test_coalesce_calls(self):
@@ -111,6 +121,21 @@ class DebounceTest(unittest.TestCase):
             (1, 5.0, 'check'),
             (1, 6.0, 'complete'),
             (1, 7.0, 'check'),
+        ])
+
+    def test_coalesce_calls_until_idle(self):
+        """Multiple calls are coalesced during 4 seconds, but the function
+        runs 4 seconds after the last call."""
+        self.scenario([
+            (1, 0.0, 'maybe_until_idle'),
+            (1, 1.0, 'maybe_until_idle'),
+            (1, 2.0, 'maybe_until_idle'),
+            (1, 3.0, 'maybe_until_idle'),
+            (1, 4.0, 'check'),  # should not be called at that time
+            (1, 7.0, 'called'),
+            (1, 8.0, 'check'),
+            (1, 9.0, 'complete'),
+            (1, 10.0, 'check'),
         ])
 
     def test_second_call_during_first(self):
@@ -217,7 +242,7 @@ class DebounceTest(unittest.TestCase):
     def test_stop_while_running_queued(self):
         """If the debounced method is stopped while running with another call
         queued, the running call completes, stop returns only after the call
-        completes, the queued call never occurs, and subsequent calls do
+        completes, the queued call still occurs, and subsequent calls do
         nothing."""
         self.scenario([
             (1, 0.0, 'maybe'),
@@ -225,9 +250,10 @@ class DebounceTest(unittest.TestCase):
             (1, 4.5, 'maybe'),
             (1, 5.0, 'stop'),
             (1, 5.0, 'stopNotComplete'),
-            (1, 6.0, 'complete'),
-            (1, 6.0, 'stopComplete'),
-            (1, 6.0, 'maybe'),
+            (1, 6.0, 'complete-and-called'),
+            (1, 6.5, 'complete'),
+            (1, 6.5, 'stopComplete'),
+            (1, 6.5, 'maybe'),
             (1, 10.0, 'check'),  # not called
         ])
 

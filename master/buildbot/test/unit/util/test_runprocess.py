@@ -15,11 +15,9 @@
 
 
 import os
+from unittest import mock
 
 from parameterized import parameterized
-
-import mock
-
 from twisted.internet import defer
 from twisted.python import runtime
 from twisted.trial import unittest
@@ -36,7 +34,6 @@ if runtime.platformType == 'win32':
 
 
 class TestRunProcess(TestReactorMixin, LoggingMixin, unittest.TestCase):
-
     FAKE_PID = 1234
 
     def setUp(self):
@@ -70,9 +67,10 @@ class TestRunProcess(TestReactorMixin, LoggingMixin, unittest.TestCase):
     @defer.inlineCallbacks
     def test_no_output(self):
         d = self.run_process(['cmd'], collect_stdout=True, collect_stderr=False)
-        self.assertEqual(self.process_spawned_args,
-                         ('cmd', ['cmd'], {'OS_ENV': 'value', 'PWD': os.path.abspath('/workdir')},
-                          '/workdir'))
+        self.assertEqual(
+            self.process_spawned_args,
+            ('cmd', ['cmd'], {'OS_ENV': 'value', 'PWD': os.path.abspath('/workdir')}, '/workdir'),
+        )
 
         self.pp.connectionMade()
         self.assertFalse(d.called)
@@ -84,11 +82,18 @@ class TestRunProcess(TestReactorMixin, LoggingMixin, unittest.TestCase):
 
     @defer.inlineCallbacks
     def test_env_new_kv(self):
-        d = self.run_process(['cmd'], collect_stdout=False, collect_stderr=False,
-                             env={'custom': 'custom-value'})
-        self.assertEqual(self.process_spawned_args,
-                         ('cmd', ['cmd'], {'OS_ENV': 'value', 'PWD': os.path.abspath('/workdir'),
-                                           'custom': 'custom-value'}, '/workdir'))
+        d = self.run_process(
+            ['cmd'], collect_stdout=False, collect_stderr=False, env={'custom': 'custom-value'}
+        )
+        self.assertEqual(
+            self.process_spawned_args,
+            (
+                'cmd',
+                ['cmd'],
+                {'OS_ENV': 'value', 'PWD': os.path.abspath('/workdir'), 'custom': 'custom-value'},
+                '/workdir',
+            ),
+        )
 
         self.pp.connectionMade()
         self.end_process()
@@ -98,12 +103,18 @@ class TestRunProcess(TestReactorMixin, LoggingMixin, unittest.TestCase):
 
     @defer.inlineCallbacks
     def test_env_overwrite_os_kv(self):
-        d = self.run_process(['cmd'], collect_stdout=True, collect_stderr=False,
-                             env={'OS_ENV': 'custom-value'})
-        self.assertEqual(self.process_spawned_args,
-                         ('cmd', ['cmd'], {'OS_ENV': 'custom-value',
-                                           'PWD': os.path.abspath('/workdir')},
-                          '/workdir'))
+        d = self.run_process(
+            ['cmd'], collect_stdout=True, collect_stderr=False, env={'OS_ENV': 'custom-value'}
+        )
+        self.assertEqual(
+            self.process_spawned_args,
+            (
+                'cmd',
+                ['cmd'],
+                {'OS_ENV': 'custom-value', 'PWD': os.path.abspath('/workdir')},
+                '/workdir',
+            ),
+        )
 
         self.pp.connectionMade()
         self.end_process()
@@ -113,10 +124,13 @@ class TestRunProcess(TestReactorMixin, LoggingMixin, unittest.TestCase):
 
     @defer.inlineCallbacks
     def test_env_remove_os_kv(self):
-        d = self.run_process(['cmd'], collect_stdout=True, collect_stderr=False,
-                             env={'OS_ENV': None})
-        self.assertEqual(self.process_spawned_args,
-                         ('cmd', ['cmd'], {'PWD': os.path.abspath('/workdir')}, '/workdir'))
+        d = self.run_process(
+            ['cmd'], collect_stdout=True, collect_stderr=False, env={'OS_ENV': None}
+        )
+        self.assertEqual(
+            self.process_spawned_args,
+            ('cmd', ['cmd'], {'PWD': os.path.abspath('/workdir')}, '/workdir'),
+        )
 
         self.pp.connectionMade()
         self.end_process()
@@ -162,8 +176,9 @@ class TestRunProcess(TestReactorMixin, LoggingMixin, unittest.TestCase):
 
     @defer.inlineCallbacks
     def test_collect_stdout_with_stdin(self):
-        d = self.run_process(['cmd'], collect_stdout=True, collect_stderr=False,
-                             initial_stdin=b'stdin')
+        d = self.run_process(
+            ['cmd'], collect_stdout=True, collect_stderr=False, initial_stdin=b'stdin'
+        )
 
         self.pp.connectionMade()
         self.pp.transport.write.assert_called_with(b'stdin')
@@ -246,9 +261,14 @@ class TestRunProcess(TestReactorMixin, LoggingMixin, unittest.TestCase):
             self.run_process_obj.send_signal.assert_not_called()
 
         res = yield d
-        self.assertEqual(res, (FATAL_RC if timed_out else 0,
-                               b'stdout_data' if had_stdout else b'',
-                               b'stderr_data' if had_stderr else b''))
+        self.assertEqual(
+            res,
+            (
+                FATAL_RC if timed_out else 0,
+                b'stdout_data' if had_stdout else b'',
+                b'stderr_data' if had_stderr else b'',
+            ),
+        )
 
     @parameterized.expand([
         ('too_short_time', 4.9, False),
@@ -275,8 +295,14 @@ class TestRunProcess(TestReactorMixin, LoggingMixin, unittest.TestCase):
 
     @defer.inlineCallbacks
     def test_runtime_timeout_failing_to_kill(self):
-        d = self.run_process(['cmd'], collect_stdout=True, collect_stderr=True, runtime_timeout=5,
-                             sigterm_timeout=5, override_is_dead=False)
+        d = self.run_process(
+            ['cmd'],
+            collect_stdout=True,
+            collect_stderr=True,
+            runtime_timeout=5,
+            sigterm_timeout=5,
+            override_is_dead=False,
+        )
 
         self.pp.connectionMade()
         self.reactor.advance(5.1)

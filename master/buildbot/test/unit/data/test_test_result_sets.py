@@ -18,6 +18,7 @@ from twisted.internet import defer
 from twisted.trial import unittest
 
 from buildbot.data import test_result_sets
+from buildbot.db.test_result_sets import TestResultSetModel
 from buildbot.test import fakedb
 from buildbot.test.fake import fakemaster
 from buildbot.test.reactor import TestReactorMixin
@@ -26,44 +27,53 @@ from buildbot.test.util import interfaces
 
 
 class TestResultSetEndpoint(endpoint.EndpointMixin, unittest.TestCase):
-
     endpointClass = test_result_sets.TestResultSetEndpoint
     resourceTypeClass = test_result_sets.TestResultSet
 
+    @defer.inlineCallbacks
     def setUp(self):
-        self.setUpEndpoint()
-        self.db.insertTestData([
+        yield self.setUpEndpoint()
+        yield self.master.db.insert_test_data([
             fakedb.Worker(id=47, name='linux'),
             fakedb.Buildset(id=20),
             fakedb.Builder(id=88, name='b1'),
             fakedb.BuildRequest(id=41, buildsetid=20, builderid=88),
             fakedb.Master(id=88),
-            fakedb.Build(id=30, buildrequestid=41, number=7, masterid=88,
-                         builderid=88, workerid=47),
+            fakedb.Build(
+                id=30, buildrequestid=41, number=7, masterid=88, builderid=88, workerid=47
+            ),
             fakedb.Step(id=131, number=132, name='step132', buildid=30),
-            fakedb.TestResultSet(id=13, builderid=88, buildid=30, stepid=131, description='desc',
-                                 category='cat', value_unit='ms', complete=1),
+            fakedb.TestResultSet(
+                id=13,
+                builderid=88,
+                buildid=30,
+                stepid=131,
+                description='desc',
+                category='cat',
+                value_unit='ms',
+                complete=1,
+            ),
         ])
-
-    def tearDown(self):
-        self.tearDownEndpoint()
 
     @defer.inlineCallbacks
     def test_get_existing_result_set(self):
         result = yield self.callGet(('test_result_sets', 13))
         self.validateData(result)
-        self.assertEqual(result, {
-            'test_result_setid': 13,
-            'builderid': 88,
-            'buildid': 30,
-            'stepid': 131,
-            'description': 'desc',
-            'category': 'cat',
-            'value_unit': 'ms',
-            'tests_passed': None,
-            'tests_failed': None,
-            'complete': True
-        })
+        self.assertEqual(
+            result,
+            {
+                'test_result_setid': 13,
+                'builderid': 88,
+                'buildid': 30,
+                'stepid': 131,
+                'description': 'desc',
+                'category': 'cat',
+                'value_unit': 'ms',
+                'tests_passed': None,
+                'tests_failed': None,
+                'complete': True,
+            },
+        )
 
     @defer.inlineCallbacks
     def test_get_missing_result_set(self):
@@ -72,29 +82,50 @@ class TestResultSetEndpoint(endpoint.EndpointMixin, unittest.TestCase):
 
 
 class TestResultSetsEndpoint(endpoint.EndpointMixin, unittest.TestCase):
-
     endpointClass = test_result_sets.TestResultSetsEndpoint
     resourceTypeClass = test_result_sets.TestResultSet
 
+    @defer.inlineCallbacks
     def setUp(self):
-        self.setUpEndpoint()
-        self.db.insertTestData([
+        yield self.setUpEndpoint()
+        yield self.master.db.insert_test_data([
             fakedb.Worker(id=47, name='linux'),
             fakedb.Buildset(id=20),
             fakedb.Builder(id=88, name='b1'),
             fakedb.BuildRequest(id=41, buildsetid=20, builderid=88),
             fakedb.Master(id=88),
-            fakedb.Build(id=30, buildrequestid=41, number=7, masterid=88,
-                         builderid=88, workerid=47),
+            fakedb.Build(
+                id=30, buildrequestid=41, number=7, masterid=88, builderid=88, workerid=47
+            ),
             fakedb.Step(id=131, number=132, name='step132', buildid=30),
-            fakedb.TestResultSet(id=13, builderid=88, buildid=30, stepid=131, description='desc',
-                                 category='cat', value_unit='ms', complete=1),
-            fakedb.TestResultSet(id=14, builderid=88, buildid=30, stepid=131, description='desc',
-                                 category='cat', value_unit='ms', complete=1),
+            fakedb.TestResultSet(
+                id=13,
+                builderid=88,
+                buildid=30,
+                stepid=131,
+                description='desc',
+                category='cat',
+                value_unit='ms',
+                complete=1,
+            ),
+            fakedb.TestResultSet(
+                id=14,
+                builderid=88,
+                buildid=30,
+                stepid=131,
+                description='desc',
+                category='cat',
+                value_unit='ms',
+                complete=1,
+            ),
         ])
 
-    def tearDown(self):
-        self.tearDownEndpoint()
+    @defer.inlineCallbacks
+    def test_get_result_sets_all(self):
+        results = yield self.callGet(('test_result_sets',))
+        for result in results:
+            self.validateData(result)
+        self.assertEqual([r['test_result_setid'] for r in results], [13, 14])
 
     @defer.inlineCallbacks
     def test_get_result_sets_builders_builderid(self):
@@ -126,29 +157,56 @@ class TestResultSetsEndpoint(endpoint.EndpointMixin, unittest.TestCase):
 
 
 class TestResultSet(TestReactorMixin, interfaces.InterfaceTests, unittest.TestCase):
-
+    @defer.inlineCallbacks
     def setUp(self):
         self.setup_test_reactor()
-        self.master = fakemaster.make_master(self, wantMq=True, wantDb=True, wantData=True)
+        self.master = yield fakemaster.make_master(self, wantMq=True, wantDb=True, wantData=True)
+        yield self.master.db.insert_test_data([
+            fakedb.Master(id=1),
+            fakedb.Worker(id=1, name='example-worker'),
+            fakedb.Builder(id=1),
+            fakedb.Buildset(id=1),
+            fakedb.BuildRequest(
+                id=1,
+                buildsetid=1,
+                builderid=1,
+            ),
+            fakedb.Build(
+                id=2,
+                number=1,
+                buildrequestid=1,
+                builderid=1,
+                workerid=1,
+                masterid=1,
+            ),
+            fakedb.Step(
+                id=3,
+                number=1,
+                name='step1',
+                buildid=2,
+            ),
+        ])
         self.rtype = test_result_sets.TestResultSet(self.master)
 
     def test_signature_add_test_result_set(self):
-        @self.assertArgSpecMatches(self.master.data.updates.addTestResultSet,
-                                   self.rtype.addTestResultSet)
+        @self.assertArgSpecMatches(
+            self.master.data.updates.addTestResultSet, self.rtype.addTestResultSet
+        )
         def addTestResultSet(self, builderid, buildid, stepid, description, category, value_unit):
             pass
 
     def test_signature_complete_test_result_set(self):
-        @self.assertArgSpecMatches(self.master.data.updates.completeTestResultSet,
-                                   self.rtype.completeTestResultSet)
+        @self.assertArgSpecMatches(
+            self.master.data.updates.completeTestResultSet, self.rtype.completeTestResultSet
+        )
         def completeTestResultSet(self, test_result_setid, tests_passed=None, tests_failed=None):
             pass
 
     @defer.inlineCallbacks
     def test_add_test_result_set(self):
-        test_result_setid = yield self.rtype.addTestResultSet(builderid=1, buildid=2, stepid=3,
-                                                              description='desc',
-                                                              category='cat4', value_unit='ms')
+        test_result_setid = yield self.rtype.addTestResultSet(
+            builderid=1, buildid=2, stepid=3, description='desc', category='cat4', value_unit='ms'
+        )
 
         msg_body = {
             'test_result_setid': test_result_setid,
@@ -168,25 +226,27 @@ class TestResultSet(TestReactorMixin, interfaces.InterfaceTests, unittest.TestCa
         ])
 
         result = yield self.master.db.test_result_sets.getTestResultSet(test_result_setid)
-        self.assertEqual(result, {
-            'id': test_result_setid,
-            'builderid': 1,
-            'buildid': 2,
-            'stepid': 3,
-            'description': 'desc',
-            'category': 'cat4',
-            'value_unit': 'ms',
-            'tests_passed': None,
-            'tests_failed': None,
-            'complete': False,
-        })
+        self.assertEqual(
+            result,
+            TestResultSetModel(
+                id=test_result_setid,
+                builderid=1,
+                buildid=2,
+                stepid=3,
+                description='desc',
+                category='cat4',
+                value_unit='ms',
+                tests_passed=None,
+                tests_failed=None,
+                complete=False,
+            ),
+        )
 
     @defer.inlineCallbacks
     def test_complete_test_result_set_no_results(self):
-        test_result_setid = \
-            yield self.master.db.test_result_sets.addTestResultSet(builderid=1, buildid=2, stepid=3,
-                                                                   description='desc',
-                                                                   category='cat4', value_unit='ms')
+        test_result_setid = yield self.master.db.test_result_sets.addTestResultSet(
+            builderid=1, buildid=2, stepid=3, description='desc', category='cat4', value_unit='ms'
+        )
 
         yield self.rtype.completeTestResultSet(test_result_setid)
 
@@ -208,25 +268,27 @@ class TestResultSet(TestReactorMixin, interfaces.InterfaceTests, unittest.TestCa
         ])
 
         result = yield self.master.db.test_result_sets.getTestResultSet(test_result_setid)
-        self.assertEqual(result, {
-            'id': test_result_setid,
-            'builderid': 1,
-            'buildid': 2,
-            'stepid': 3,
-            'description': 'desc',
-            'category': 'cat4',
-            'value_unit': 'ms',
-            'tests_passed': None,
-            'tests_failed': None,
-            'complete': True,
-        })
+        self.assertEqual(
+            result,
+            TestResultSetModel(
+                id=test_result_setid,
+                builderid=1,
+                buildid=2,
+                stepid=3,
+                description='desc',
+                category='cat4',
+                value_unit='ms',
+                tests_passed=None,
+                tests_failed=None,
+                complete=True,
+            ),
+        )
 
     @defer.inlineCallbacks
     def test_complete_test_result_set_with_results(self):
-        test_result_setid = \
-            yield self.master.db.test_result_sets.addTestResultSet(builderid=1, buildid=2, stepid=3,
-                                                                   description='desc',
-                                                                   category='cat4', value_unit='ms')
+        test_result_setid = yield self.master.db.test_result_sets.addTestResultSet(
+            builderid=1, buildid=2, stepid=3, description='desc', category='cat4', value_unit='ms'
+        )
 
         yield self.rtype.completeTestResultSet(test_result_setid, tests_passed=12, tests_failed=34)
 
@@ -248,15 +310,18 @@ class TestResultSet(TestReactorMixin, interfaces.InterfaceTests, unittest.TestCa
         ])
 
         result = yield self.master.db.test_result_sets.getTestResultSet(test_result_setid)
-        self.assertEqual(result, {
-            'id': test_result_setid,
-            'builderid': 1,
-            'buildid': 2,
-            'stepid': 3,
-            'description': 'desc',
-            'category': 'cat4',
-            'value_unit': 'ms',
-            'tests_passed': 12,
-            'tests_failed': 34,
-            'complete': True,
-        })
+        self.assertEqual(
+            result,
+            TestResultSetModel(
+                id=test_result_setid,
+                builderid=1,
+                buildid=2,
+                stepid=3,
+                description='desc',
+                category='cat4',
+                value_unit='ms',
+                tests_passed=12,
+                tests_failed=34,
+                complete=True,
+            ),
+        )

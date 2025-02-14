@@ -16,6 +16,8 @@
 
 import re
 import textwrap
+from typing import ClassVar
+from typing import Sequence
 
 from twisted.internet import defer
 from twisted.internet import reactor
@@ -31,12 +33,13 @@ from buildbot.steps.source.base import Source
 
 @implementer(IRenderable)
 class RepoDownloadsFromProperties(util.ComparableMixin):
-    parse_download_re = (re.compile(r"repo download ([^ ]+) ([0-9]+/[0-9]+)"),
-                         re.compile(r"([^ ]+) ([0-9]+/[0-9]+)"),
-                         re.compile(r"([^ ]+)/([0-9]+/[0-9]+)"),
-                         )
+    parse_download_re = (
+        re.compile(r"repo download ([^ ]+) ([0-9]+/[0-9]+)"),
+        re.compile(r"([^ ]+) ([0-9]+/[0-9]+)"),
+        re.compile(r"([^ ]+)/([0-9]+/[0-9]+)"),
+    )
 
-    compare_attrs = ('names',)
+    compare_attrs: ClassVar[Sequence[str]] = ('names',)
 
     def __init__(self, names):
         self.names = names
@@ -51,13 +54,13 @@ class RepoDownloadsFromProperties(util.ComparableMixin):
 
     def parseDownloadProperty(self, s):
         """
-         lets try to be nice in the format we want
-         can support several instances of "repo download proj number/patch"
-         (direct copy paste from gerrit web site) or several instances of "proj number/patch"
-         (simpler version)
-         This feature allows integrator to build with several pending interdependent changes.
-         returns list of repo downloads sent to the worker
-         """
+        lets try to be nice in the format we want
+        can support several instances of "repo download proj number/patch"
+        (direct copy paste from gerrit web site) or several instances of "proj number/patch"
+        (simpler version)
+        This feature allows integrator to build with several pending interdependent changes.
+        returns list of repo downloads sent to the worker
+        """
         if s is None:
             return []
         ret = []
@@ -65,14 +68,14 @@ class RepoDownloadsFromProperties(util.ComparableMixin):
             res = cur_re.search(s)
             while res:
                 ret.append(f"{res.group(1)} {res.group(2)}")
-                s = s[:res.start(0)] + s[res.end(0):]
+                s = s[: res.start(0)] + s[res.end(0) :]
                 res = cur_re.search(s)
         return ret
 
 
 @implementer(IRenderable)
 class RepoDownloadsFromChangeSource(util.ComparableMixin):
-    compare_attrs = ('codebase',)
+    compare_attrs: ClassVar[Sequence[str]] = ('codebase',)
 
     def __init__(self, codebase=None):
         self.codebase = codebase
@@ -84,27 +87,43 @@ class RepoDownloadsFromChangeSource(util.ComparableMixin):
         else:
             changes = props.getBuild().getSourceStamp(self.codebase).changes
         for change in changes:
-            if ("event.type" in change.properties and
-                    change.properties["event.type"] == "patchset-created"):
-                downloads.append(f'{change.properties["event.change.project"]} '
-                                 f'{change.properties["event.change.number"]}/'
-                                 f'{change.properties["event.patchSet.number"]}')
+            if (
+                "event.type" in change.properties
+                and change.properties["event.type"] == "patchset-created"
+            ):
+                downloads.append(
+                    f'{change.properties["event.change.project"]} '
+                    f'{change.properties["event.change.number"]}/'
+                    f'{change.properties["event.patchSet.number"]}'
+                )
         return downloads
 
 
 class Repo(Source):
+    """Class for Repo with all the smarts"""
 
-    """ Class for Repo with all the smarts """
     name = 'repo'
-    renderables = ["manifestURL", "manifestBranch", "manifestFile", "tarball", "jobs",
-                   "syncAllBranches", "updateTarballAge", "manifestOverrideUrl",
-                   "repoDownloads", "depth", "submodules"]
+    renderables = [
+        "manifestURL",
+        "manifestBranch",
+        "manifestFile",
+        "tarball",
+        "jobs",
+        "syncAllBranches",
+        "updateTarballAge",
+        "manifestOverrideUrl",
+        "repoDownloads",
+        "depth",
+        "submodules",
+    ]
 
     ref_not_found_re = re.compile(r"fatal: Couldn't find remote ref")
-    cherry_pick_error_re = re.compile(r"|".join([r"Automatic cherry-pick failed",
-                                                 r"error: "
-                                                 r"fatal: "
-                                                 r"possibly due to conflict resolution."]))
+    cherry_pick_error_re = re.compile(
+        r"|".join([
+            r"Automatic cherry-pick failed",
+            r"error: fatal: possibly due to conflict resolution.",
+        ])
+    )
     re_change = re.compile(r".* refs/changes/\d\d/(\d+)/(\d+) -> FETCH_HEAD$")
     re_head = re.compile(r"^HEAD is now at ([0-9a-f]+)...")
     # number of retries, if we detect mirror desynchronization
@@ -112,20 +131,22 @@ class Repo(Source):
     # wait 1min between retries (thus default total retry time is 10min)
     mirror_sync_sleep = 60
 
-    def __init__(self,
-                 manifestURL=None,
-                 manifestBranch="master",
-                 manifestFile="default.xml",
-                 tarball=None,
-                 jobs=None,
-                 syncAllBranches=False,
-                 updateTarballAge=7 * 24.0 * 3600.0,
-                 manifestOverrideUrl=None,
-                 repoDownloads=None,
-                 depth=0,
-                 submodules=False,
-                 syncQuietly=False,
-                 **kwargs):
+    def __init__(
+        self,
+        manifestURL=None,
+        manifestBranch="master",
+        manifestFile="default.xml",
+        tarball=None,
+        jobs=None,
+        syncAllBranches=False,
+        updateTarballAge=7 * 24.0 * 3600.0,
+        manifestOverrideUrl=None,
+        repoDownloads=None,
+        depth=0,
+        submodules=False,
+        syncQuietly=False,
+        **kwargs,
+    ):
         """
         @type  manifestURL: string
         @param manifestURL: The URL which points at the repo manifests repository.
@@ -197,30 +218,33 @@ class Repo(Source):
         manifest_related_downloads = []
         for download in self.repoDownloads:
             project, ch_ps = download.split(" ")[-2:]
-            if (self.manifestURL.endswith("/" + project) or
-                    self.manifestURL.endswith("/" + project + ".git")):
+            if self.manifestURL.endswith("/" + project) or self.manifestURL.endswith(
+                "/" + project + ".git"
+            ):
                 ch, ps = map(int, ch_ps.split("/"))
                 branch = f"refs/changes/{ch % 100:02}/{ch}/{ps}"
-                manifest_related_downloads.append(
-                    ["git", "fetch", self.manifestURL, branch])
-                manifest_related_downloads.append(
-                    ["git", "cherry-pick", "FETCH_HEAD"])
+                manifest_related_downloads.append(["git", "fetch", self.manifestURL, branch])
+                manifest_related_downloads.append(["git", "cherry-pick", "FETCH_HEAD"])
             else:
                 manifest_unrelated_downloads.append(download)
         self.repoDownloads = manifest_unrelated_downloads
         self.manifestDownloads = manifest_related_downloads
 
     def _repoCmd(self, command, abandonOnFailure=True, **kwargs):
-        return self._Cmd(["repo"] + command, abandonOnFailure=abandonOnFailure, **kwargs)
+        return self._Cmd(["repo", *command], abandonOnFailure=abandonOnFailure, **kwargs)
 
     @defer.inlineCallbacks
     def _Cmd(self, command, abandonOnFailure=True, workdir=None, **kwargs):
         if workdir is None:
             workdir = self.workdir
-        cmd = remotecommand.RemoteShellCommand(workdir, command,
-                                               env=self.env,
-                                               logEnviron=self.logEnviron,
-                                               timeout=self.timeout, **kwargs)
+        cmd = remotecommand.RemoteShellCommand(
+            workdir,
+            command,
+            env=self.env,
+            logEnviron=self.logEnviron,
+            timeout=self.timeout,
+            **kwargs,
+        )
         self.lastCommand = cmd
         # does not make sense to logEnviron for each command (just for first)
         self.logEnviron = False
@@ -253,8 +277,11 @@ class Repo(Source):
         self.filterManifestPatches()
 
         if self.repoDownloads:
-            yield self.stdio_log.addHeader("will download:\nrepo download {}\n".format(
-                    "\nrepo download ".join(self.repoDownloads)))
+            yield self.stdio_log.addHeader(
+                "will download:\nrepo download {}\n".format(
+                    "\nrepo download ".join(self.repoDownloads)
+                )
+            )
 
         self.willRetryInCaseOfFailure = True
 
@@ -263,8 +290,9 @@ class Repo(Source):
         except buildstep.BuildStepFailed as e:
             if not self.willRetryInCaseOfFailure:
                 raise
-            yield self.stdio_log.addStderr("got issue at first try:\n" + str(e) +
-                                           "\nRetry after clobber...")
+            yield self.stdio_log.addStderr(
+                "got issue at first try:\n" + str(e) + "\nRetry after clobber..."
+            )
             yield self.doRepoSync(forceClobber=True)
 
         yield self.maybeUpdateTarball()
@@ -287,11 +315,17 @@ class Repo(Source):
             self.willRetryInCaseOfFailure = False
             yield self.doClobberStart()
         yield self.doCleanup()
-        command = ['init',
-                   '-u', self.manifestURL,
-                   '-b', self.manifestBranch,
-                   '-m', self.manifestFile,
-                   '--depth', str(self.depth)]
+        command = [
+            'init',
+            '-u',
+            self.manifestURL,
+            '-b',
+            self.manifestBranch,
+            '-m',
+            self.manifestFile,
+            '--depth',
+            str(self.depth),
+        ]
 
         if self.submodules:
             command.append('--submodules')
@@ -308,12 +342,15 @@ class Repo(Source):
                 yield self._Cmd(["cp", "-f", self.manifestOverrideUrl, "manifest_override.xml"])
             else:
                 yield self._Cmd(["wget", self.manifestOverrideUrl, "-O", "manifest_override.xml"])
-            yield self._Cmd(["ln", "-sf", "../manifest_override.xml", "manifest.xml"],
-                            workdir=self.build.path_module.join(self.workdir, ".repo"))
+            yield self._Cmd(
+                ["ln", "-sf", "../manifest_override.xml", "manifest.xml"],
+                workdir=self.build.path_module.join(self.workdir, ".repo"),
+            )
 
         for command in self.manifestDownloads:
-            yield self._Cmd(command, workdir=self.build.path_module.join(self.workdir, ".repo",
-                                                                         "manifests"))
+            yield self._Cmd(
+                command, workdir=self.build.path_module.join(self.workdir, ".repo", "manifests")
+            )
 
         command = ['sync', '--force-sync']
         if self.jobs:
@@ -324,8 +361,10 @@ class Repo(Source):
             command.append('-q')
         self.description = "repo sync"
         # FIXME: enable when new style step is used: yield self.updateSummary()
-        yield self.stdio_log.addHeader(f"synching manifest {self.manifestFile} from branch "
-                                       f"{self.manifestBranch} from {self.manifestURL}\n")
+        yield self.stdio_log.addHeader(
+            f"synching manifest {self.manifestFile} from branch "
+            f"{self.manifestBranch} from {self.manifestURL}\n"
+        )
         yield self._repoCmd(command)
 
         command = ['manifest', '-r', '-o', 'manifest-original.xml']
@@ -338,7 +377,7 @@ class Repo(Source):
             if not hasattr(self.lastCommand, logname):
                 continue
             msg = getattr(self.lastCommand, logname)
-            if not re.search(error_re, msg) is None:
+            if re.search(error_re, msg) is not None:
                 return True
         return False
 
@@ -351,13 +390,14 @@ class Repo(Source):
     def doRepoDownloads(self):
         self.repo_downloaded = ""
         for download in self.repoDownloads:
-            command = ['download'] + download.split(' ')
+            command = ["download", *download.split(" ")]
             yield self.stdio_log.addHeader(f"downloading changeset {download}\n")
 
             retry = self.mirror_sync_retry + 1
             while retry > 0:
-                yield self._repoCmd(command, abandonOnFailure=False,
-                                    collectStdout=True, collectStderr=True)
+                yield self._repoCmd(
+                    command, abandonOnFailure=False, collectStdout=True, collectStderr=True
+                )
                 if not self._findErrorMessages(self.ref_not_found_re):
                     break
                 retry -= 1
@@ -386,8 +426,9 @@ class Repo(Source):
                     if not match2:
                         match2 = self.re_head.match(line)
                 if match1 and match2:
-                    self.repo_downloaded += (f"{match1.group(1)}/{match1.group(2)} "
-                                             f"{match2.group(1)} ")
+                    self.repo_downloaded += (
+                        f"{match1.group(1)}/{match1.group(2)} {match2.group(1)} "
+                    )
 
         self.setProperty("repo_downloaded", self.repo_downloaded, "Source")
 
@@ -411,7 +452,7 @@ class Repo(Source):
     @defer.inlineCallbacks
     def maybeExtractTarball(self):
         if self.tarball:
-            tar = self.computeTarballOptions() + ['-xvf', self.tarball]
+            tar = [*self.computeTarballOptions(), "-xvf", self.tarball]
             res = yield self._Cmd(tar, abandonOnFailure=False)
             if res:  # error with tarball.. erase repo dir and tarball
                 yield self._Cmd(["rm", "-f", self.tarball], abandonOnFailure=False)
@@ -423,16 +464,17 @@ class Repo(Source):
             return
         # tarball path is absolute, so we cannot use worker's stat command
         # stat -c%Y gives mtime in second since epoch
-        res = yield self._Cmd(["stat", "-c%Y", self.tarball], collectStdout=True,
-                              abandonOnFailure=False)
+        res = yield self._Cmd(
+            ["stat", "-c%Y", self.tarball], collectStdout=True, abandonOnFailure=False
+        )
+        age = 0
         if not res:
             tarball_mtime = int(self.lastCommand.stdout)
             yield self._Cmd(["stat", "-c%Y", "."], collectStdout=True)
             now_mtime = int(self.lastCommand.stdout)
             age = now_mtime - tarball_mtime
         if res or age > self.updateTarballAge:
-            tar = self.computeTarballOptions() + \
-                ['-cvf', self.tarball, ".repo"]
+            tar = [*self.computeTarballOptions(), "-cvf", self.tarball, ".repo"]
             res = yield self._Cmd(tar, abandonOnFailure=False)
             if res:  # error with tarball.. erase tarball, but don't fail
                 yield self._Cmd(["rm", "-f", self.tarball], abandonOnFailure=False)
@@ -461,9 +503,11 @@ class Repo(Source):
              repo forall -c git clean -f -d -x 2>/dev/null
              repo forall -c git reset --hard HEAD 2>/dev/null
              rm -f %(workdir)s/.repo/project.list
-             """) % dict(manifestBranch=self.manifestBranch,
-                         manifestFile=self.manifestFile,
-                         workdir=self.workdir)
+             """) % {
+            "manifestBranch": self.manifestBranch,
+            "manifestFile": self.manifestFile,
+            "workdir": self.workdir,
+        }
 
     def doCleanup(self):
         command = self._getCleanupCommand()

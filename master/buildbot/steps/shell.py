@@ -12,23 +12,23 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
+from __future__ import annotations
 
 import re
 
 from twisted.internet import defer
-from twisted.python.deprecate import deprecatedModuleAttribute
-from twisted.python.versions import Version
 
 from buildbot import config
 from buildbot.process import buildstep
 from buildbot.process import logobserver
+
 # for existing configurations that import WithProperties from here.  We like
 # to move this class around just to keep our readers guessing.
 from buildbot.process.properties import WithProperties
 from buildbot.process.results import FAILURE
 from buildbot.process.results import SUCCESS
 from buildbot.process.results import WARNINGS
-from buildbot.process.results import Results
+from buildbot.process.results import statusToString
 from buildbot.process.results import worst_status
 from buildbot.steps.worker import CompositeStepMixin
 from buildbot.util import join_list
@@ -47,8 +47,7 @@ class TreeSize(buildstep.ShellMixin, buildstep.BuildStep):
     def __init__(self, **kwargs):
         kwargs = self.setupShellMixin(kwargs)
         super().__init__(**kwargs)
-        self.observer = logobserver.BufferLogObserver(wantStdout=True,
-                                                      wantStderr=True)
+        self.observer = logobserver.BufferLogObserver(wantStdout=True, wantStderr=True)
         self.addLogObserver('stdio', self.observer)
 
     @defer.inlineCallbacks
@@ -82,9 +81,15 @@ class SetPropertyFromCommand(buildstep.ShellMixin, buildstep.BuildStep):
     name = "setproperty"
     renderables = ['property']
 
-    def __init__(self, property=None, extract_fn=None, strip=True,
-                 includeStdout=True, includeStderr=False, **kwargs):
-
+    def __init__(
+        self,
+        property=None,
+        extract_fn=None,
+        strip=True,
+        includeStdout=True,
+        includeStderr=False,
+        **kwargs,
+    ):
         kwargs = self.setupShellMixin(kwargs)
 
         self.property = property
@@ -94,8 +99,7 @@ class SetPropertyFromCommand(buildstep.ShellMixin, buildstep.BuildStep):
         self.includeStderr = includeStderr
 
         if not (property is not None) ^ (extract_fn is not None):
-            config.error(
-                "Exactly one of property and extract_fn must be set")
+            config.error("Exactly one of property and extract_fn must be set")
 
         super().__init__(**kwargs)
 
@@ -103,8 +107,8 @@ class SetPropertyFromCommand(buildstep.ShellMixin, buildstep.BuildStep):
             self.includeStderr = True
 
         self.observer = logobserver.BufferLogObserver(
-            wantStdout=self.includeStdout,
-            wantStderr=self.includeStderr)
+            wantStdout=self.includeStdout, wantStderr=self.includeStderr
+        )
         self.addLogObserver('stdio', self.observer)
 
     @defer.inlineCallbacks
@@ -128,62 +132,56 @@ class SetPropertyFromCommand(buildstep.ShellMixin, buildstep.BuildStep):
             self.setProperty(propname, result, "SetPropertyFromCommand Step")
             property_changes[propname] = result
         else:
-            new_props = self.extract_fn(cmd.rc,
-                                        self.observer.getStdout(),
-                                        self.observer.getStderr())
+            new_props = self.extract_fn(
+                cmd.rc, self.observer.getStdout(), self.observer.getStderr()
+            )
             for k, v in new_props.items():
                 self.setProperty(k, v, "SetPropertyFromCommand Step")
             property_changes = new_props
 
-        props_set = [f"{k}: {repr(v)}"
-                     for k, v in sorted(property_changes.items())]
+        props_set = [f"{k}: {v!r}" for k, v in sorted(property_changes.items())]
         yield self.addCompleteLog('property changes', "\n".join(props_set))
 
         if len(property_changes) > 1:
             self.descriptionDone = f'{len(property_changes)} properties set'
         elif len(property_changes) == 1:
-            self.descriptionDone = f'property \'{list(property_changes)[0]}\' set'
+            self.descriptionDone = f'property \'{next(iter(property_changes))}\' set'
         if cmd.didFail():
             return FAILURE
         return SUCCESS
-
-
-SetProperty = SetPropertyFromCommand
-deprecatedModuleAttribute(Version("Buildbot", 0, 8, 8),
-                          "It has been renamed to SetPropertyFromCommand",
-                          "buildbot.steps.shell", "SetProperty")
 
 
 class ShellCommand(buildstep.ShellMixin, buildstep.BuildStep):
     name = 'shell'
 
     def __init__(self, **kwargs):
-
-        if self.__class__ is ShellCommand:
+        if self.is_exact_step_class(ShellCommand):
             if 'command' not in kwargs:
                 config.error("ShellCommand's `command' argument is not specified")
 
             # check validity of arguments being passed to RemoteShellCommand
             valid_rsc_args = [
-                'command',
-                'env',
-                'want_stdout',
-                'want_stderr',
-                'timeout',
-                'maxTime',
-                'sigtermTime',
-                'logfiles',
-                'lazylogfiles',
-                'usePTY',
-                'logEnviron',
-                'collectStdout',
-                'collectStderr',
-                'interruptSignal',
-                'initialStdin',
-                'decodeRC',
-                'stdioLogName',
-                'workdir',
-            ] + buildstep.BuildStep.parms
+                "command",
+                "env",
+                "want_stdout",
+                "want_stderr",
+                "timeout",
+                "maxTime",
+                "max_lines",
+                "sigtermTime",
+                "logfiles",
+                "lazylogfiles",
+                "usePTY",
+                "logEnviron",
+                "collectStdout",
+                "collectStderr",
+                "interruptSignal",
+                "initialStdin",
+                "decodeRC",
+                "stdioLogName",
+                "workdir",
+                *buildstep.BuildStep._params_names,
+            ]
 
             invalid_args = []
             for arg in kwargs:
@@ -191,8 +189,9 @@ class ShellCommand(buildstep.ShellMixin, buildstep.BuildStep):
                     invalid_args.append(arg)
 
             if invalid_args:
-                config.error("Invalid argument(s) passed to ShellCommand: " +
-                             ', '.join(invalid_args))
+                config.error(
+                    "Invalid argument(s) passed to ShellCommand: " + ', '.join(invalid_args)
+                )
 
         kwargs = self.setupShellMixin(kwargs)
         super().__init__(**kwargs)
@@ -206,8 +205,8 @@ class ShellCommand(buildstep.ShellMixin, buildstep.BuildStep):
 
 class Configure(ShellCommand):
     name = "configure"
-    haltOnFailure = 1
-    flunkOnFailure = 1
+    haltOnFailure = True
+    flunkOnFailure = True
     description = "configuring"
     descriptionDone = "configure"
     command = ["./configure"]
@@ -226,23 +225,33 @@ class WarningCountingShellCommand(buildstep.ShellMixin, CompositeStepMixin, buil
     warnCount = 0
     warningPattern = '(?i).*warning[: ].*'
     # The defaults work for GNU Make.
-    directoryEnterPattern = ("make.*: Entering directory "
-                             "[\u2019\"`'](.*)[\u2019'`\"]")
+    directoryEnterPattern = "make.*: Entering directory [\u2019\"`'](.*)[\u2019'`\"]"
     directoryLeavePattern = "make.*: Leaving directory"
-    suppressionFile = None
+    suppressionFile: str | None = None
 
     commentEmptyLineRe = re.compile(r"^\s*(#.*)?$")
-    suppressionLineRe = re.compile(
-        r"^\s*(.+?)\s*:\s*(.+?)\s*(?:[:]\s*([0-9]+)(?:-([0-9]+))?\s*)?$")
+    suppressionLineRe = re.compile(r"^\s*(.+?)\s*:\s*(.+?)\s*(?:[:]\s*([0-9]+)(?:-([0-9]+))?\s*)?$")
 
-    def __init__(self,
-                 warningPattern=None, warningExtractor=None, maxWarnCount=None,
-                 directoryEnterPattern=None, directoryLeavePattern=None,
-                 suppressionFile=None, suppressionList=None, **kwargs):
+    class Sentinel:
+        pass
+
+    _sentinel = Sentinel()
+
+    def __init__(
+        self,
+        warningPattern=_sentinel,
+        warningExtractor=None,
+        maxWarnCount=None,
+        directoryEnterPattern=None,
+        directoryLeavePattern=None,
+        suppressionFile=None,
+        suppressionList=None,
+        **kwargs,
+    ):
         # See if we've been given a regular expression to use to match
         # warnings. If not, use a default that assumes any line with "warning"
         # present is a warning. This may lead to false positives in some cases.
-        if warningPattern:
+        if not isinstance(warningPattern, self.Sentinel):
             self.warningPattern = warningPattern
         if directoryEnterPattern:
             self.directoryEnterPattern = directoryEnterPattern
@@ -258,7 +267,7 @@ class WarningCountingShellCommand(buildstep.ShellMixin, CompositeStepMixin, buil
             self.warningExtractor = WarningCountingShellCommand.warnExtractWholeLine
         self.maxWarnCount = maxWarnCount
 
-        if self.__class__ is WarningCountingShellCommand and not kwargs.get('command'):
+        if self.is_exact_step_class(WarningCountingShellCommand) and not kwargs.get('command'):
             # WarningCountingShellCommand class is directly instantiated.
             # Explicitly check that command is set to prevent runtime error
             # later.
@@ -273,9 +282,10 @@ class WarningCountingShellCommand(buildstep.ShellMixin, CompositeStepMixin, buil
         self.warnCount = 0
         self.loggedWarnings = []
 
-        self.addLogObserver(
-            'stdio',
-            logobserver.LineConsumerLogObserver(self.warningLogConsumer))
+        if self.warningPattern is not None:
+            self.addLogObserver(
+                'stdio', logobserver.LineConsumerLogObserver(self.warningLogConsumer)
+            )
 
     def addSuppression(self, suppressionList):
         """
@@ -330,13 +340,11 @@ class WarningCountingShellCommand(buildstep.ShellMixin, CompositeStepMixin, buil
             wre = re.compile(wre)
 
         directoryEnterRe = self.directoryEnterPattern
-        if (directoryEnterRe is not None and
-                isinstance(directoryEnterRe, str)):
+        if directoryEnterRe is not None and isinstance(directoryEnterRe, str):
             directoryEnterRe = re.compile(directoryEnterRe)
 
         directoryLeaveRe = self.directoryLeavePattern
-        if (directoryLeaveRe is not None and
-                isinstance(directoryLeaveRe, str)):
+        if directoryLeaveRe is not None and isinstance(directoryLeaveRe, str):
             directoryLeaveRe = re.compile(directoryLeaveRe)
 
         # Check if each line in the output from this command matched our
@@ -350,9 +358,7 @@ class WarningCountingShellCommand(buildstep.ShellMixin, CompositeStepMixin, buil
                 if match:
                     self.directoryStack.append(match.group(1))
                     continue
-            if (directoryLeaveRe and
-                self.directoryStack and
-                    directoryLeaveRe.search(line)):
+            if directoryLeaveRe and self.directoryStack and directoryLeaveRe.search(line):
                 self.directoryStack.pop()
                 continue
 
@@ -376,8 +382,9 @@ class WarningCountingShellCommand(buildstep.ShellMixin, CompositeStepMixin, buil
                     continue
                 if not (warnRe is None or warnRe.search(text)):
                     continue
-                if ((start is not None and end is not None) and
-                   not (lineNo is not None and start <= lineNo <= end)):
+                if (start is not None and end is not None) and not (
+                    lineNo is not None and start <= lineNo <= end
+                ):
                     continue
                 return
 
@@ -437,19 +444,21 @@ class WarningCountingShellCommand(buildstep.ShellMixin, CompositeStepMixin, buil
         # If there were any warnings, make the log if lines with warnings
         # available
         if self.warnCount:
-            yield self.addCompleteLog(f"warnings ({self.warnCount})",
-                                      "\n".join(self.loggedWarnings) + "\n")
+            yield self.addCompleteLog(
+                f"warnings ({self.warnCount})", "\n".join(self.loggedWarnings) + "\n"
+            )
 
         warnings_stat = self.getStatistic('warnings', 0)
         self.setStatistic('warnings', warnings_stat + self.warnCount)
 
         old_count = self.getProperty("warnings-count", 0)
         self.setProperty(
-            "warnings-count", old_count + self.warnCount, "WarningCountingShellCommand")
+            "warnings-count", old_count + self.warnCount, "WarningCountingShellCommand"
+        )
 
     def evaluateCommand(self, cmd):
         result = cmd.results()
-        if (self.maxWarnCount is not None and self.warnCount > self.maxWarnCount):
+        if self.maxWarnCount is not None and self.warnCount > self.maxWarnCount:
             result = worst_status(result, FAILURE)
         elif self.warnCount:
             result = worst_status(result, WARNINGS)
@@ -457,19 +466,17 @@ class WarningCountingShellCommand(buildstep.ShellMixin, CompositeStepMixin, buil
 
 
 class Compile(WarningCountingShellCommand):
-
     name = "compile"
-    haltOnFailure = 1
-    flunkOnFailure = 1
+    haltOnFailure = True
+    flunkOnFailure = True
     description = ["compiling"]
     descriptionDone = ["compile"]
     command = ["make", "all"]
 
 
 class Test(WarningCountingShellCommand):
-
     name = "test"
-    warnOnFailure = 1
+    warnOnFailure = True
     description = ["testing"]
     descriptionDone = ["test"]
     command = ["make", "test"]
@@ -511,14 +518,15 @@ class Test(WarningCountingShellCommand):
             if description:
                 summary = join_list(description)
                 if self.results != SUCCESS:
-                    summary += f' ({Results[self.results]})'
+                    summary += f' ({statusToString(self.results)})'
+                    if self.timed_out:
+                        summary += " (timed out)"
                 return {'step': summary}
 
         return super().getResultSummary()
 
 
 class PerlModuleTestObserver(logobserver.LogLineObserver):
-
     def __init__(self, warningPattern):
         super().__init__()
         if warningPattern:
@@ -570,8 +578,7 @@ class PerlModuleTest(Test):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.observer = PerlModuleTestObserver(
-            warningPattern=self.warningPattern)
+        self.observer = PerlModuleTestObserver(warningPattern=self.warningPattern)
         self.addLogObserver('stdio', self.observer)
 
     def evaluateCommand(self, cmd):
@@ -582,7 +589,8 @@ class PerlModuleTest(Test):
                 total=self.observer.total,
                 failed=self.observer.failed,
                 passed=passed,
-                warnings=self.observer.warnings)
+                warnings=self.observer.warnings,
+            )
 
         rc = self.observer.rc
         if rc == SUCCESS and self.observer.warnings:

@@ -13,13 +13,12 @@
 #
 # Copyright Buildbot Team Members
 
-import mock
+from unittest import mock
 
 from twisted.internet import defer
 from twisted.internet import reactor
 from twisted.trial import unittest
 from twisted.web.resource import Resource
-from twisted.web.server import Site
 from twisted.web.util import redirectTo
 
 from buildbot.process import properties
@@ -28,11 +27,14 @@ from buildbot.process.results import SUCCESS
 from buildbot.steps import http
 from buildbot.test.reactor import TestReactorMixin
 from buildbot.test.steps import TestBuildStepMixin
+from buildbot.test.util.site import SiteWithClose
 
 try:
     import txrequests
+
     assert txrequests
     import requests
+
     assert requests
 except ImportError:
     txrequests = requests = None
@@ -40,6 +42,7 @@ except ImportError:
 
 # We use twisted's internal webserver instead of mocking requests
 # to be sure we use the correct requests interfaces
+
 
 class TestPage(Resource):
     isLeaf = True
@@ -62,31 +65,26 @@ class TestPage(Resource):
 
 
 class TestHTTPStep(TestBuildStepMixin, TestReactorMixin, unittest.TestCase):
-
-    timeout = 3  # those tests should not run long
-
     def setUp(self):
         self.setup_test_reactor()
         if txrequests is None:
-            raise unittest.SkipTest(
-                "Need to install txrequests to test http steps")
+            raise unittest.SkipTest("Need to install txrequests to test http steps")
 
         # ignore 'http_proxy' environment variable when running tests
         session = http.getSession()
+        self.addCleanup(http.closeSession)
         session.trust_env = False
 
         # port 0 means random unused port
-        self.listener = reactor.listenTCP(0, Site(TestPage()))
+        self.site = SiteWithClose(TestPage())
+        self.addCleanup(self.site.stopFactory)
+        self.addCleanup(self.site.close_connections)
+
+        self.listener = reactor.listenTCP(0, self.site)
+        self.addCleanup(self.listener.stopListening)
+
         self.port = self.listener.getHost().port
         return self.setup_test_build_step()
-
-    @defer.inlineCallbacks
-    def tearDown(self):
-        http.closeSession()
-        try:
-            yield self.listener.stopListening()
-        finally:
-            yield self.tear_down_test_build_step()
 
     def get_connection_string(self):
         return f"http://127.0.0.1:{self.port}"
@@ -116,7 +114,7 @@ class TestHTTPStep(TestBuildStepMixin, TestReactorMixin, unittest.TestCase):
         url = self.getURL("redirect")
         self.setup_step(http.GET(url))
 
-        expected_log = f'''
+        expected_log = f"""
 Redirected 1 times:
 
 URL: {self.get_connection_string()}/redirect
@@ -134,7 +132,7 @@ URL: {self.get_connection_string()}/redirect
 URL: {self.get_connection_string()}/redirected-path
 Status: 200
  ------ Content ------
-OK'''
+OK"""
 
         self.expect_log_file('log', expected_log)
         self.expect_log_file('content', "OK")
@@ -167,8 +165,7 @@ OK'''
         url = self.getURL("path")
         self.setup_step(http.POST(url, data='mydata'))
         self.expect_outcome(result=SUCCESS, state_string="Status code: 200")
-        self.expect_log_file('log',
-                           f"URL: {url}\nStatus: 200\n ------ Content ------\nOK:mydata")
+        self.expect_log_file('log', f"URL: {url}\nStatus: 200\n ------ Content ------\nOK:mydata")
         self.expect_log_file('content', "OK:mydata")
         return self.run_step()
 
@@ -177,42 +174,48 @@ OK'''
 
         self.setup_step(http.POST(url, data={'key1': 'value1'}))
         self.expect_outcome(result=SUCCESS, state_string="Status code: 200")
-        self.expect_log_file('log', f'''\
+        self.expect_log_file(
+            'log',
+            f"""\
 URL: {url}
 Status: 200
  ------ Content ------
-OK:key1=value1''')
+OK:key1=value1""",
+        )
         self.expect_log_file('content', "OK:key1=value1")
         return self.run_step()
 
     def test_header(self):
         url = self.getURL("header")
         self.setup_step(http.GET(url, headers={"X-Test": "True"}))
-        self.expect_log_file('log',
-                             f"URL: {url}\nStatus: 200\n ------ Content ------\nTrue")
+        self.expect_log_file('log', f"URL: {url}\nStatus: 200\n ------ Content ------\nTrue")
         self.expect_outcome(result=SUCCESS, state_string="Status code: 200")
         return self.run_step()
 
     @defer.inlineCallbacks
     def test_hidden_header(self):
         url = self.getURL("header")
-        self.setup_step(http.GET(url, headers={"X-Test": "True"},
-                                hide_request_headers=["X-Test"],
-                                hide_response_headers=["Content-Length"]))
-        self.expect_log_file('log',
-                             f"URL: {url}\nStatus: 200\n ------ Content ------\nTrue")
+        self.setup_step(
+            http.GET(
+                url,
+                headers={"X-Test": "True"},
+                hide_request_headers=["X-Test"],
+                hide_response_headers=["Content-Length"],
+            )
+        )
+        self.expect_log_file('log', f"URL: {url}\nStatus: 200\n ------ Content ------\nTrue")
         self.expect_outcome(result=SUCCESS, state_string="Status code: 200")
         yield self.run_step()
-        self.assertIn("X-Test: <HIDDEN>", self.step.logs['log'].header)
-        self.assertIn("Content-Length: <HIDDEN>", self.step.logs['log'].header)
+        self.assertIn("X-Test: <HIDDEN>", self.get_nth_step(0).logs['log'].header)
+        self.assertIn("Content-Length: <HIDDEN>", self.get_nth_step(0).logs['log'].header)
 
     def test_params_renderable(self):
         url = self.getURL()
         self.setup_step(http.GET(url, params=properties.Property("x")))
-        self.properties.setProperty(
-            'x', {'param_1': 'param_1', 'param_2': 2}, 'here')
-        self.expect_log_file('log',
-            f"URL: {url}?param_1=param_1&param_2=2\nStatus: 200\n ------ Content ------\nOK")
+        self.build.setProperty("x", {"param_1": "param_1", "param_2": 2}, "here")
+        self.expect_log_file(
+            'log', f"URL: {url}?param_1=param_1&param_2=2\nStatus: 200\n ------ Content ------\nOK"
+        )
         self.expect_log_file('content', "OK")
         self.expect_outcome(result=SUCCESS, state_string="Status code: 200")
         return self.run_step()

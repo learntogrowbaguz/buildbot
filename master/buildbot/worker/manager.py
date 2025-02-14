@@ -12,7 +12,7 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # Copyright Buildbot Team Members
-
+from __future__ import annotations
 
 from twisted.internet import defer
 from twisted.python import log
@@ -24,7 +24,6 @@ from buildbot.worker.protocols import pb as bbpb
 
 
 class WorkerRegistration:
-
     __slots__ = ['master', 'worker', 'pbReg', 'msgpack_reg']
 
     def __init__(self, master, worker):
@@ -34,18 +33,16 @@ class WorkerRegistration:
         self.msgpack_reg = None
 
     def __repr__(self):
-        return f"<{self.__class__.__name__} for {repr(self.worker.workername)}>"
+        return f"<{self.__class__.__name__} for {self.worker.workername!r}>"
 
     @defer.inlineCallbacks
     def unregister(self):
         bs = self.worker
         # update with portStr=None to remove any registration in place
         if self.pbReg is not None:
-            yield self.master.workers.pb.updateRegistration(
-                bs.workername, bs.password, None)
+            yield self.master.workers.pb.updateRegistration(bs.workername, bs.password, None)
         if self.msgpack_reg is not None:
-            yield self.master.workers.msgpack.updateRegistration(
-                bs.workername, bs.password, None)
+            yield self.master.workers.msgpack.updateRegistration(bs.workername, bs.password, None)
         yield self.master.workers._unregister(self)
 
     @defer.inlineCallbacks
@@ -54,13 +51,17 @@ class WorkerRegistration:
         # update the registration in case the port or password has changed.
         if 'pb' in global_config.protocols:
             self.pbReg = yield self.master.workers.pb.updateRegistration(
-                worker_config.workername, worker_config.password,
-                global_config.protocols['pb']['port'])
+                worker_config.workername,
+                worker_config.password,
+                global_config.protocols['pb']['port'],
+            )
 
-        if 'msgpack_experimental_v4' in global_config.protocols:
+        if 'msgpack_experimental_v7' in global_config.protocols:
             self.msgpack_reg = yield self.master.workers.msgpack.updateRegistration(
-                worker_config.workername, worker_config.password,
-                global_config.protocols['msgpack_experimental_v4']['port'])
+                worker_config.workername,
+                worker_config.password,
+                global_config.protocols['msgpack_experimental_v7']['port'],
+            )
 
     def getPBPort(self):
         return self.pbReg.getPort()
@@ -70,13 +71,11 @@ class WorkerRegistration:
 
 
 class WorkerManager(MeasuredBuildbotServiceManager):
-
-    name = "WorkerManager"
+    name: str | None = "WorkerManager"  # type: ignore[assignment]
     managed_services_name = "workers"
 
     config_attr = "workers"
     PING_TIMEOUT = 10
-    reconfig_priority = 127
 
     def __init__(self, master):
         super().__init__()
@@ -117,20 +116,25 @@ class WorkerManager(MeasuredBuildbotServiceManager):
     @defer.inlineCallbacks
     def newConnection(self, conn, workerName):
         if workerName in self.connections:
-            log.msg(f"Got duplication connection from '{workerName}'"
-                    " starting arbitration procedure")
+            log.msg(
+                f"Got duplication connection from '{workerName}' starting arbitration procedure"
+            )
             old_conn = self.connections[workerName]
             try:
-                yield misc.cancelAfter(self.PING_TIMEOUT,
-                                       old_conn.remotePrint("master got a duplicate connection"),
-                                       self.master.reactor)
+                yield misc.cancelAfter(
+                    self.PING_TIMEOUT,
+                    old_conn.remotePrint("master got a duplicate connection"),
+                    self.master.reactor,
+                )
                 # if we get here then old connection is still alive, and new
                 # should be rejected
                 raise RuntimeError("rejecting duplicate worker")
             except defer.CancelledError:
                 old_conn.loseConnection()
-                log.msg(f"Connected worker '{workerName}' ping timed out after {self.PING_TIMEOUT} "
-                        "seconds")
+                log.msg(
+                    f"Connected worker '{workerName}' ping timed out after {self.PING_TIMEOUT} "
+                    "seconds"
+                )
             except RuntimeError:
                 raise
             except Exception as e:
@@ -151,6 +155,7 @@ class WorkerManager(MeasuredBuildbotServiceManager):
 
         def remove():
             del self.connections[workerName]
+
         conn.notifyOnDisconnect(remove)
 
         # accept the connection
